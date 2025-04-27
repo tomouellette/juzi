@@ -40,6 +40,17 @@ def factor_similarity(
     Ns = Hs.shape[0]
     samples = np.repeat(np.arange(len(H)), H[0].shape[0])
 
+    if callable(distance):
+        x, y = np.random.rand(4), np.random.rand(4)
+        try:
+            d = distance(x, y)
+        except:
+            raise ValueError("'distance' is not a valid callable")
+
+        if not isinstance(d, (int, float)):
+            raise ValueError(
+                "If 'distance' is a callable, it must return a scalar")
+
     similarity = np.zeros((Ns, Ns))
     for i in range(Ns):
         for j in range(i + 1, Ns):
