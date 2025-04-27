@@ -47,4 +47,3 @@ W, losses = fixed_poisson_nmf(
     silent=False
 )
 ```
-# juzi
