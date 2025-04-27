@@ -18,7 +18,8 @@ def factor_similarity(
     Parameters
     ----------
     H : List[np.ndarray]
-        A list of K x M factors (column-wise e.g. genes) from S samples
+        A list of K x M factors (column-wise e.g. genes) from S samples. Note
+        that the number of factors (K) may vary between different samples.
     distance : Union[str, Callabe]
         One of 'jaccard', 'cosine', 'spearman', 'pearson' or a custom callable
     top_k : Optional[int]
@@ -38,7 +39,8 @@ def factor_similarity(
     """
     Hs = np.vstack(H)
     Ns = Hs.shape[0]
-    samples = np.repeat(np.arange(len(H)), H[0].shape[0])
+    samples = np.concatenate([np.full(H[i].shape[0], i)
+                             for i in range(len(H))])
 
     if callable(distance):
         x, y = np.random.rand(4), np.random.rand(4)
