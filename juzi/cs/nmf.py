@@ -283,7 +283,7 @@ def fixed_gaussian_nmf(
     eps: float = 1e-6,
     silent: bool = False
 ) -> Tuple[np.ndarray, List[float]]:
-    """Gaussian non-negative matrix factorization with fixed H factors
+    """Gaussian non-negative matrix factorization with fixed H
 
     Parameters
     ----------
@@ -356,7 +356,7 @@ def fixed_poisson_nmf(
     eps: float = 1e-6,
     silent: bool = False
 ) -> Tuple[np.ndarray, List[float]]:
-    """Semi-Poisson non-negative matrix factorization with fixed H
+    """Poisson non-negative matrix factorization with fixed H
 
     Parameters
     ----------
