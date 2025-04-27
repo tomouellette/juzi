@@ -2,7 +2,7 @@
 
 Various methods for analyzing cell states and types in single-cell sequencing data.
 
-# cell states (`cs`)
+### cell states (`cs`)
 
 ```python
 from juzi.cs.nmf import gaussian_nmf, poisson_nmf, fixed_poisson_nmf
