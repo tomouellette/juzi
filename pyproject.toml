@@ -1,0 +1,22 @@
+[project]
+name = "juzi"
+version = "0.0.1"
+description = "juzi"
+authors = [{ name="Tom W. Ouellette" } ]
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+  "torch>=2.5.1",
+  "numpy>=1.26.4",
+  "scipy>=1.11.4",
+  "polars==1.27.1"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Homepage = "https://github.com/tomouellette/juzi"
+Issues = "https://github.com/tomouellette/juzi/issues"
