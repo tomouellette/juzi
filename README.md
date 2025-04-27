@@ -4,6 +4,8 @@ Various methods for analyzing cell states and types in single-cell sequencing da
 
 ### cell states (`cs`)
 
+Identifying intra-sample programs.
+
 ```python
 from juzi.cs.nmf import gaussian_nmf, poisson_nmf, fixed_poisson_nmf
 
@@ -45,5 +47,21 @@ W, losses = fixed_poisson_nmf(
     init="random",
     eps=1e-7,
     silent=False
+)
+```
+
+Identifying shared programs. 
+
+```python
+from juzi.cs.tools import factor_similarity
+
+# Compute similarity matrix between factors computed across S samples
+S, ids = factor_similarity(
+    [H1, H2, H3, ...],
+    distance="cosine",
+    top_k=500,
+    drop_zeros=True,
+    intra_sample=False,
+    eps=1e-8
 )
 ```
