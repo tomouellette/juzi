@@ -6,6 +6,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Custom
+build.sh
+
 # Apple OS
 *.DS_Store
 
