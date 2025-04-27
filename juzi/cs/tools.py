@@ -109,4 +109,4 @@ def factor_similarity(
         similarity = similarity[nonzero_rows][:, nonzero_cols]
         samples = samples[kept_indices]
 
-    return similarity, samples
+    return similarity, Hs[kept_indices], samples

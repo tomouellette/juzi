@@ -56,7 +56,7 @@ Identifying shared programs.
 from juzi.cs.tools import factor_similarity
 
 # Compute similarity matrix between factors computed across S samples
-S, ids = factor_similarity(
+S, K, ids = factor_similarity(
     [H1, H2, H3, ...],
     distance="cosine",
     top_k=500,
