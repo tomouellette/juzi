@@ -1,6 +1,6 @@
 # :tangerine: juzi
 
-Various methods for analyzing cell states and types in single-cell sequencing data.
+Various methods for analyzing cell states and types in single-cell sequencing data (experimental).
 
 ### cell states (`cs`)
 
@@ -50,12 +50,23 @@ W, losses = fixed_poisson_nmf(
 )
 ```
 
-Identifying shared programs. 
+Identifying consensus (intrasample) and shared (cross-sample) programs. 
 
 ```python
-from juzi.cs.tools import factor_similarity
+from juzi.cs.tools import consensus_factors, factor_similarity
 
-# Compute similarity matrix between factors computed across S samples
+# Compute a set of consensus factors between runs
+HC, HS, labels, correlation = consensus_factors(
+    [HA, HB, HC, ...],
+    n_clusters=10,
+    eps=1e-8,
+    method="agglomerative",
+    metric="euclidean",
+    linkage="ward",
+)
+
+
+# Compute similarity matrix between factors computed across different samples
 S, K, ids = factor_similarity(
     [H1, H2, H3, ...],
     distance="cosine",
