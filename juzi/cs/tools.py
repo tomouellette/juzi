@@ -70,7 +70,7 @@ def factor_similarity(
 
             if isinstance(top_k, (int, float)) or distance == "jaccard":
                 top_x = np.argsort(x)[-int(top_k):]
-                top_y = np.argsort(x)[-int(top_k):]
+                top_y = np.argsort(y)[-int(top_k):]
                 union = np.union1d(top_x, top_y)
 
             if isinstance(top_k, (int, float)):
