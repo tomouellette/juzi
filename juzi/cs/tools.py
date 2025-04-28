@@ -44,7 +44,7 @@ def factor_similarity(
     samples = np.concatenate([np.full(H[i].shape[0], i)
                              for i in range(len(H))])
 
-    kept_indices = np.arange(Ns)  # In case drop_zeros is False
+    kept_indices = np.arange(Ns)
 
     if callable(distance):
         x, y = np.random.rand(4), np.random.rand(4)
