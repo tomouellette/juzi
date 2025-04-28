@@ -79,7 +79,7 @@ def consensus_factors(
             corr = []
             for i, j in itertools.product(range(len(members)), repeat=2):
                 if i != j and np.sum(members[i]) > 0 and np.sum(members[j]) > 0:
-                    corr.append(np.corrcoef(members[i], members[j])[0, 1])
+                    corr.append(spearmanr(members[i], members[j]).statistic**2)
 
             if len(corr) > 0:
                 cluster_correlation[c] = np.mean(corr)
