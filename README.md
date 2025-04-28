@@ -2,6 +2,12 @@
 
 Various methods for analyzing cell states and types in single-cell sequencing data (experimental).
 
+### Installation
+
+```bash
+pip install juzi
+```
+
 ### cell states (`cs`)
 
 Identifying intra-sample programs.
