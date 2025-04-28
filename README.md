@@ -57,7 +57,7 @@ from juzi.cs.tools import consensus_factors, factor_similarity
 
 # Compute a set of consensus factors between runs
 HC, HS, labels, correlation = consensus_factors(
-    [HA, HB, HC, ...],
+    [H1, H2, H3, ...],
     n_clusters=10,
     eps=1e-8,
     method="agglomerative",
