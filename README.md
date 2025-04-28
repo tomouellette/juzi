@@ -50,7 +50,7 @@ W, losses = fixed_poisson_nmf(
 )
 ```
 
-Identifying consensus (intrasample) and shared (cross-sample) programs. 
+Identifying consensus (intra-sample) and shared (inter-sample) programs. 
 
 ```python
 from juzi.cs.tools import consensus_factors, factor_similarity
