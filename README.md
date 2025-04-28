@@ -7,7 +7,7 @@ Various methods for analyzing cell states and types in single-cell sequencing da
 Identifying intra-sample programs.
 
 ```python
-from juzi.cs.nmf import gaussian_nmf, poisson_nmf, fixed_poisson_nmf
+from juzi.cs.nmf import gaussian_nmf, poisson_nmf, fixed_gaussian_nmf, fixed_poisson_nmf
 
 # Vanilla NMF on normalized and log1p counts
 W, H, losses = gaussian_nmf(
