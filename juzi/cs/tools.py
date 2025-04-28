@@ -12,53 +12,54 @@ def factor_similarity(
     drop_zeros: bool = True,
     intra_sample: bool = False,
     eps: float = 1e-8,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Compute similarity matrix between factors computed across S samples
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute similarity matrix between factors computed across samples.
 
     Parameters
     ----------
     H : List[np.ndarray]
-        A list of K x M factors (column-wise e.g. genes) from S samples. Note
-        that the number of factors (K) may vary between different samples.
-    distance : Union[str, Callabe]
-        One of 'jaccard', 'cosine', 'spearman', 'pearson' or a custom callable
+        List of K x M matrices (factors from different samples).
+    distance : str or callable
+        'jaccard', 'cosine', 'spearman', 'pearson' or a custom function.
     top_k : Optional[int]
-        Compute factor similarity using only the union of the top K loadings
+        Restrict comparison to top_k genes.
     drop_zeros : bool
-        If True, then rows/columns with sum of zero will be dropped from matrix
+        Drop factors with no similarities.
     intra_sample : bool
-        If True, pairwise similarity between intra-sample factors will be kept
+        Whether to allow comparing factors from the same sample.
     eps : float
-        A small value to avoid division by zero
+        Small constant to avoid division by zero.
 
     Returns
     -------
-    Tuple[np.ndarray, np.ndarray]
-        A similarity matrix between factors and integer value specifying which
-        sample (the i-th member in input list) the factor originated from
+    Tuple[np.ndarray, np.ndarray, np.ndarray]
+        Similarity matrix, concatenated factor matrix, sample IDs.
     """
+
+    if distance == "jaccard" and top_k is None:
+        raise ValueError("top_k must be set when using Jaccard similarity.")
+
     Hs = np.vstack(H)
     Ns = Hs.shape[0]
     samples = np.concatenate([np.full(H[i].shape[0], i)
                              for i in range(len(H))])
 
+    kept_indices = np.arange(Ns)  # In case drop_zeros is False
+
     if callable(distance):
         x, y = np.random.rand(4), np.random.rand(4)
         try:
             d = distance(x, y)
+            if not isinstance(d, (int, float)):
+                raise ValueError()
         except:
-            raise ValueError("'distance' is not a valid callable")
-
-        if not isinstance(d, (int, float)):
             raise ValueError(
-                "If 'distance' is a callable, it must return a scalar")
+                "'distance' must be a valid callable that returns a scalar.")
 
     similarity = np.zeros((Ns, Ns))
+
     for i in range(Ns):
         for j in range(i + 1, Ns):
-            if i == j:
-                continue
-
             if (samples[i] == samples[j]) and not intra_sample:
                 continue
 
@@ -68,12 +69,14 @@ def factor_similarity(
             if np.sum(x) == 0 or np.sum(y) == 0:
                 continue
 
-            if isinstance(top_k, (int, float)) or distance == "jaccard":
+            x = x / np.linalg.norm(x)
+            y = y / np.linalg.norm(y)
+
+            if top_k is not None:
                 top_x = np.argsort(x)[-int(top_k):]
                 top_y = np.argsort(y)[-int(top_k):]
                 union = np.union1d(top_x, top_y)
 
-            if isinstance(top_k, (int, float)):
                 if len(union) == 0:
                     continue
 
@@ -91,9 +94,7 @@ def factor_similarity(
             elif callable(distance):
                 s_xy = distance(x, y)
             else:
-                raise ValueError(
-                    "'distance' must be one of 'jaccard', 'cosine', 'spearman'"
-                    ", 'pearson', or a custom callable")
+                raise ValueError(f"Unknown distance type: {distance}")
 
             if np.isnan(s_xy):
                 continue
@@ -102,11 +103,9 @@ def factor_similarity(
             similarity[j, i] = s_xy
 
     if drop_zeros:
-        nonzero_rows = ~np.all(similarity == 0, axis=1)
-        nonzero_cols = ~np.all(similarity == 0, axis=0)
-        kept_indices = np.where(nonzero_rows)[0]
-
-        similarity = similarity[nonzero_rows][:, nonzero_cols]
+        nonzero = ~np.all(similarity == 0, axis=1)
+        kept_indices = np.where(nonzero)[0]
+        similarity = similarity[nonzero][:, nonzero]
         samples = samples[kept_indices]
 
     return similarity, Hs[kept_indices], samples
