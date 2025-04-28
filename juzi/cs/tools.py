@@ -60,7 +60,7 @@ def consensus_factors(
         Z = linkage_(distance_matrix, method=linkage)
         labels = fcluster(Z, t=n_clusters, criterion='maxclust') - 1
     else:
-        raise ValueError('method' must be one of 'kmeans' or 'agglomerative'")
+        raise ValueError("'method' must be one of 'kmeans' or 'agglomerative'")
 
     # Assign consensus as median within each cluster
     H_consensus = []
