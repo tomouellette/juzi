@@ -70,6 +70,7 @@ class CancerPathways:
     NOTCH: List[str] = field(init=False)
     PI3K: List[str] = field(init=False)
     RTK_RAS: List[str] = field(init=False)
+    SPLICESOME: List[str] = field(init=False)
     TGF_BETA: List[str] = field(init=False)
     TP53: List[str] = field(init=False)
     WNT: List[str] = field(init=False)
@@ -90,6 +91,7 @@ class CancerPathways:
         self.NOTCH = data["NOTCH"]
         self.PI3K = data["PI3K"]
         self.RTK_RAS = data["RTK_RAS"]
+        self.SPLICESOME = data["SPLICESOME"]
         self.TGF_BETA = data["TGF_BETA"]
         self.TP53 = data["TP53"]
         self.WNT = data["WNT"]
