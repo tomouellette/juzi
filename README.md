@@ -97,7 +97,7 @@ print(available_sets())
 from juzi.mg import CancerBreast
 markers = CancerBreast()
 
-# Load cancer pathway gene sets
+# Load cancer pathway gene sets (e.g. HIPPO)
 from juzi.mg import CancerPathways
 markers = CancerPathways()
 
