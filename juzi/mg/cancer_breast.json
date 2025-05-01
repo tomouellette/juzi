@@ -110,5 +110,55 @@
     "FGFR4",
     "CDH3",
     "MLPH"
+  ],
+  "CURATED_BASAL": [
+    "EGFR",
+    "FOXC1",
+    "ID4",
+    "KIT",
+    "MYC",
+    "MKI67",
+    "MYBL2",
+    "AURKA",
+    "BUB1",
+    "CENPF",
+    "KRT5",
+    "KRT6A"
+  ],
+  "CURATED_HER2": [
+    "ERBB2",
+    "GRB7",
+    "MKI67",
+    "MYBL2",
+    "AURKA",
+    "BUB1",
+    "CENPF",
+    "KRT8",
+    "KRT18"
+  ],
+  "CURATED_LUMA": [
+    "ESR1",
+    "PGR",
+    "GATA3",
+    "XBP1",
+    "FOXA1",
+    "KRT5",
+    "ID4",
+    "KIT",
+    "KRT5"
+  ],
+  "CURATED_LUMB": [
+    "ESR1",
+    "PGR",
+    "GATA3",
+    "XBP1",
+    "FOXA1",
+    "MKI67",
+    "MYBL2",
+    "AURKA",
+    "BUB1",
+    "CENPF",
+    "KRT8",
+    "KRT18"
   ]
 }

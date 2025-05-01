@@ -21,7 +21,8 @@ class CancerBreast:
     Notes
     -----
     The subtype specific markers were taken as the top 10 ranking genes
-    from the PAM50 centroids (i.e. genes with highest subtype expression)
+    from the PAM50 centroids (i.e. genes with highest subtype expression) the
+    curated sets are smaller sets known to be expressed in certain subtypes
 
     References
     ----------
@@ -35,6 +36,11 @@ class CancerBreast:
     PAM50_LUMA: List[str] = field(init=False)
     PAM50_LUMB: List[str] = field(init=False)
     PAM50_NORMAL: List[str] = field(init=False)
+
+    CURATED_BASAL: List[str] = field(init=False)
+    CURATED_HER2: List[str] = field(init=False)
+    CURATED_LUMA: List[str] = field(init=False)
+    CURATED_LUMB: List[str] = field(init=False)
 
     def info(self):
         return self.__annotations__
@@ -52,6 +58,11 @@ class CancerBreast:
         self.PAM50_LUMA = data["PAM50_LUMA"]
         self.PAM50_LUMB = data["PAM50_LUMB"]
         self.PAM50_NORMAL = data["PAM50_NORMAL"]
+
+        self.CURATED_BASAL = data["CURATED_BASAL"]
+        self.CURATED_HER2 = data["CURATED_HER2"]
+        self.CURATED_LUMA = data["CURATED_LUMA"]
+        self.CURATED_LUMB = data["CURATED_LUMB"]
 
 
 @dataclass
