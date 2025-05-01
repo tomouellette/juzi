@@ -77,6 +77,7 @@ class CancerPathways:
 
     CELL_CYCLE: List[str] = field(init=False)
     HIPPO: List[str] = field(init=False)
+    JAK_STAT: List[str] = field(init=False)
     MYC: List[str] = field(init=False)
     NOTCH: List[str] = field(init=False)
     PI3K: List[str] = field(init=False)
@@ -98,6 +99,7 @@ class CancerPathways:
 
         self.CELL_CYCLE = data["CELL_CYCLE"]
         self.HIPPO = data["HIPPO"]
+        self.JAK_STAT = data["JAK_STAT"]
         self.MYC = data["MYC"]
         self.NOTCH = data["NOTCH"]
         self.PI3K = data["PI3K"]
