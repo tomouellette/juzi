@@ -82,3 +82,29 @@ S, K, ids = factor_similarity(
     eps=1e-8
 )
 ```
+
+### marker genes (`mg`)
+
+Various marker genes for cell types, subtypes, and pathways.
+
+```python
+from juzi.mg import available_sets
+
+# Check available marker gene sets
+print(available_sets())
+
+# Load breast cancer gene sets (e.g. PAM50)
+from juzi.mg import CancerBreast
+markers = CancerBreast()
+
+# Load cancer pathway gene sets
+from juzi.mg import CancerPathways
+markers = CancerPathways()
+
+# Load cell cycle gene sets (e.g. G1S)
+from juzi.mg import CellCycle
+markers = CellCycle()
+
+# List available sets in a given marker class
+markers.info()
+```

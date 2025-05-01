@@ -10,8 +10,8 @@ dependencies = [
   "torch>=2.5.1",
   "numpy>=1.26.4",
   "scipy>=1.11.4",
-  "polars==1.27.1"
-  "tqdm>=4.66.4",
+  "polars==1.27.1",
+  "tqdm>=4.66.4"
 ]
 
 [build-system]
