@@ -69,10 +69,17 @@ class CancerBreast:
 class CancerPathways:
     """Genes from various canonical cancer pathways
 
+    Notes
+    -----
+    The splicesome and JAK-STAT markers were collected from the
+    KEGG database. The remaining from Sanchez-Vega et al. 2018.
+
     References
     ----------
     .. [1] F. Sanchez-Vega et al. Oncogenic Signaling Pathways in The Cancer
        Genome Atlas. Cell. 2018.
+    .. [2] M. Kanehisa et al. KEGG: Kyoto Encyclopedia of Genes and Genomes. 
+       Nucleic Acids Research. 2000.
     """
 
     CELL_CYCLE: List[str] = field(init=False)
