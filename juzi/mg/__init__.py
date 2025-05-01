@@ -45,6 +45,12 @@ class CancerBreast:
     def info(self):
         return self.__annotations__
 
+    def all(self):
+        markers = []
+        for key in self.info().keys():
+            markers += getattr(self, key)
+        return markers
+
     def __post_init__(self):
         with importlib.resources.open_text(
             "juzi.mg",
@@ -97,6 +103,12 @@ class CancerPathways:
     def info(self):
         return self.__annotations__
 
+    def all(self):
+        markers = []
+        for key in self.info().keys():
+            markers += getattr(self, key)
+        return markers
+
     def __post_init__(self):
         with importlib.resources.open_text(
             "juzi.mg",
@@ -132,6 +144,12 @@ class CellCycle:
 
     def info(self):
         return self.__annotations__
+
+    def all(self):
+        markers = []
+        for key in self.info().keys():
+            markers += getattr(self, key)
+        return markers
 
     def __post_init__(self):
         with importlib.resources.open_text("juzi.mg", "cell_cycle.json") as f:

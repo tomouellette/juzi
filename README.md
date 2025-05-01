@@ -107,4 +107,7 @@ markers = CellCycle()
 
 # List available sets in a given marker class
 markers.info()
+
+# Get all genes from all sets in a flattened list
+markers.all()
 ```
