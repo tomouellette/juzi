@@ -1,6 +1,6 @@
 [project]
 name = "juzi"
-version = "0.0.6"
+version = "0.0.8"
 description = "juzi"
 authors = [{ name="Tom W. Ouellette" } ]
 readme = "README.md"
@@ -12,7 +12,8 @@ dependencies = [
   "scipy>=1.11.4",
   "polars==1.27.1",
   "tqdm>=4.66.4",
-  "matplotlib>=3.10.1"
+  "matplotlib>=3.10.1",
+  "joblib>=1.4.2"
 ]
 
 [build-system]
