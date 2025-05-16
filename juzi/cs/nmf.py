@@ -80,7 +80,10 @@ def multisample_nmf(
         if center:
             X = X - X.mean(axis=0)
         if scale:
-            X = X / X.std(axis=0)
+            std = X.std(axis=0)
+            mask = std == 0
+            std[mask] = 1
+            X = X / std
 
         X[X < 0] = 0
         X[X > max_exp] = max_exp
