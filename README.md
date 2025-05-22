@@ -62,7 +62,20 @@ S, K, ids = factor_similarity(
 )
 ```
 
-Some additional tools for clustering and filtering factors.
+Scoring top gene sets identified across factors.
+
+```python
+from juzi.cs.tools import score_gene_sets
+
+# Score a set of genes on subsetted expression matrix
+cell_scores = score_gene_set(
+    X_subset,
+    scale_by_sv=True
+)
+```
+
+```python
+Clustering factors into recurrent programs.
 
 ```python
 from juzi.cs.cluster import eigengap_heuristic, spectral_clustering
