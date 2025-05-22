@@ -74,7 +74,6 @@ cell_scores = score_gene_set(
 )
 ```
 
-```python
 Clustering factors into recurrent programs.
 
 ```python
