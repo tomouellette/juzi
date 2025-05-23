@@ -74,32 +74,6 @@ cell_scores = score_gene_set(
 )
 ```
 
-Clustering factors into recurrent programs.
-
-```python
-from juzi.cs.cluster import eigengap_heuristic, spectral_clustering
-
-# Estimate an optimal number of clusters from a similarity matrix
-results = eigengap_heuristic(
-    S,
-    min_clusters=2,
-    max_clusters=10,
-    normalize=True,
-    eps=1e-8
-)
-
-results.plot(show=True)
-
-# Cluster a similarity matrix given an input number of clusters
-assignments = spectral_clustering(
-    S,
-    n_clusters=results.k,
-    normalize=True,
-    seed=123456,
-    eps=1e-8
-)
-```
-
 ### marker genes (`mg`)
 
 Various marker genes for cell types, subtypes, and pathways.

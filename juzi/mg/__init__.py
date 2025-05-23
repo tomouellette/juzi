@@ -22,12 +22,17 @@ class CancerBreast:
     -----
     The subtype specific markers were taken as the top 10 ranking genes
     from the PAM50 centroids (i.e. genes with highest subtype expression) the
-    curated sets are smaller sets known to be expressed in certain subtypes
+    curated sets are smaller sets known to be expressed in certain subtypes.
+    The TNBC markers from Burstein et al. were collected from Table 2 which
+    outlined the genes with significant overexpression.
 
     References
     ----------
     .. [1] J.S. Parker et al. Supervised Risk Predictor of Breast Cancer Based
        on Intrinsic Subtypes. Journal of Clinical Oncology. 2009.
+    .. [2] M.D Burstein et al. Comprehensive genomic analysis identifies novel 
+       subtypes and targets of triple-negative breast cancer.
+       Clinical Cancer Research. 2015.
     """
 
     PAM50: List[str] = field(init=False)
@@ -41,6 +46,11 @@ class CancerBreast:
     CURATED_HER2: List[str] = field(init=False)
     CURATED_LUMA: List[str] = field(init=False)
     CURATED_LUMB: List[str] = field(init=False)
+
+    TNBC_BURSTEIN_LAR: List[str] = field(init=False)
+    TNBC_BURSTEIN_MES: List[str] = field(init=False)
+    TNBC_BURSTEIN_BLIS: List[str] = field(init=False)
+    TNBC_BURSTEIN_BLIA: List[str] = field(init=False)
 
     def info(self):
         return self.__annotations__
@@ -69,6 +79,11 @@ class CancerBreast:
         self.CURATED_HER2 = data["CURATED_HER2"]
         self.CURATED_LUMA = data["CURATED_LUMA"]
         self.CURATED_LUMB = data["CURATED_LUMB"]
+
+        self.TNBC_BURSTEIN_LAR = data["TNBC_BURSTEIN_LAR"]
+        self.TNBC_BURSTEIN_MES = data["TNBC_BURSTEIN_MES"]
+        self.TNBC_BURSTEIN_BLIS = data["TNBC_BURSTEIN_BLIS"]
+        self.TNBC_BURSTEIN_BLIA = data["TNBC_BURSTEIN_BLIA"]
 
 
 @dataclass
@@ -131,7 +146,12 @@ class CancerPathways:
 
 @dataclass
 class CellCycle:
-    """Cell cycle gene markers for G1/S and G2/M phases
+    """Cell cycle gene markers
+
+    Notes
+    -----
+    The G1S and G2M markers were collected from Tirosh et al. 2016
+    and the CDK/Cyclin genes were collected from HUGO.
 
     References
     ----------
@@ -141,6 +161,8 @@ class CellCycle:
 
     G1S: List[str] = field(init=False)
     G2M: List[str] = field(init=False)
+    CDK: List[str] = field(init=False)
+    CYCLIN: List[str] = field(init=False)
 
     def info(self):
         return self.__annotations__
@@ -157,3 +179,5 @@ class CellCycle:
 
         self.G1S = data["G1S"]
         self.G2M = data["G2M"]
+        self.CDK = data["CDK"]
+        self.CYCLIN = data["CYCLIN"]
