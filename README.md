@@ -67,7 +67,7 @@ Scoring top gene sets identified across factors.
 ```python
 from juzi.cs.tools import score_gene_sets
 
-# Score a set of genes from the subsetted expression matrix
+# Score a set of genes using the subsetted expression matrix
 cell_scores = score_gene_set(
     X_subset,
     scale_by_sv=True
