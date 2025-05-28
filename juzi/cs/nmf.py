@@ -20,14 +20,15 @@ def multisample_nmf(
     k: List[int] = [5, 6, 7, 8, 9],
     standard_scale: bool = False,
     robust_scale: bool = False,
-    clip_quantile: float = 1.0,
+    clip_quantile: float = 1.,
     target_sum: float = 1e5,
-    max_exp: float = 10.0,
+    max_exp: float = 10.,
     max_iter: int = 500,
     alpha: float = 0.,
     tol: float = 0.0001,
     loss: str = "frobenius",
     init: str = "nndsvda",
+    l1_ratio: float = 0.,
     n_jobs: int = 1,
     prefer: str = "threads",
     seed: int = 123
@@ -77,7 +78,7 @@ def multisample_nmf(
     if robust_scale and standard_scale:
         raise ValueError("robust_scale and standard_scale can't both be True.")
 
-    if clip_quantile > 1.0 | clip_quantile < 0.0:
+    if clip_quantile > 1.0 or clip_quantile < 0.0:
         raise ValueError("clip_quantile must be in [0, 1]")
 
     if not isinstance(k, list):
@@ -129,6 +130,7 @@ def multisample_nmf(
                     random_state=seed,
                     tol=tol,
                     max_iter=max_iter,
+                    l1_ratio=l1_ratio,
                     beta_loss=loss,
                 ).fit(X)
 
