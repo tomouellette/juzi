@@ -22,14 +22,15 @@ from juzi.cs.nmf import multisample_nmf
 Hs = multisample_nmf(
     [C1, C2, C3, ...],
     k=[5, 6, 7, 8, 9],
-    center=False,
-    scale=False,
+    robust_scale=True,
+    clip_quantile=0.99,
     target_sum=1e5,
     max_exp=10.0,
     max_iter=500,
     alpha=0.,
     tol=0.0001,
     loss="frobenius",
+    init="nndsvda",
     n_jobs=8,
     prefer="threads",
     seed=123

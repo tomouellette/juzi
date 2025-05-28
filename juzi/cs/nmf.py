@@ -18,14 +18,16 @@ from sklearn.decomposition import NMF
 def multisample_nmf(
     data: Union[List[np.ndarray], List[scipy.sparse.csr_matrix]],
     k: List[int] = [5, 6, 7, 8, 9],
-    center: bool = False,
-    scale: bool = False,
+    standard_scale: bool = False,
+    robust_scale: bool = False,
+    clip_quantile: float = 1.0,
     target_sum: float = 1e5,
     max_exp: float = 10.0,
     max_iter: int = 500,
     alpha: float = 0.,
     tol: float = 0.0001,
     loss: str = "frobenius",
+    init: str = "nndsvda",
     n_jobs: int = 1,
     prefer: str = "threads",
     seed: int = 123
@@ -38,10 +40,12 @@ def multisample_nmf(
         A list of count matrices with identical gene features.
     k : List[int]
         Fit NMF at multiple number of components for each sample.
-    center : bool
-        Center features prior to NMF.
-    scale : bool
-        Scale features prior to NMF.
+    standard_scale : bool
+        Standard scale features prior to NMF i.e. (x - mean) / std.
+    robust_scale : bool
+        Robust scale features prior to NMF i.e. (x - median) / nonzero IQR.
+    clip_quantile : bool
+        Clip outliers at a specified quantile.
     target_sum : float
         Total count per cell after normalization.
     max_exp : float
@@ -54,6 +58,10 @@ def multisample_nmf(
         Convergence tolerance for NMF.
     loss : str
         Beta divergence loss ('frobenius' or 'kullback-leibler').
+    init : str
+        NMF initialization strategy ('nndsvd', 'nnsvda', or see sklearn NMF).
+    l1_ratio : float
+        Regularization mixing parameter (0 = L2, 1 = L1, 0-1 = L1/L2 mix).
     n_jobs : str
         Number of parallel processes/threads to run.
     prefer : str
@@ -66,6 +74,15 @@ def multisample_nmf(
     List[np.ndarray]
         A list of sum(k) x M factors per sample
     """
+    if robust_scale and standard_scale:
+        raise ValueError("robust_scale and standard_scale can't both be True.")
+
+    if clip_quantile > 1.0 | clip_quantile < 0.0:
+        raise ValueError("clip_quantile must be in [0, 1]")
+
+    if not isinstance(k, list):
+        raise ValueError("k must be a list of integers.")
+
     np.random.seed(seed)
 
     def _iter(
@@ -77,15 +94,24 @@ def multisample_nmf(
         X = target_sum * (X / X.sum(axis=1)[:, np.newaxis])
         X = np.log1p(X)
 
-        if center:
+        if standard_scale:
             X = X - X.mean(axis=0)
-        if scale:
             std = X.std(axis=0)
             mask = std == 0
             std[mask] = 1
             X = X / std
+            X[X < 0] = 0
 
-        X[X < 0] = 0
+        if robust_scale:
+            iqr = np.subtract(*np.percentile(X[X > 0], [75, 25], axis=0))
+            if iqr == 0:
+                iqr = 1
+
+            X = (X - np.median(X, axis=0)) / iqr
+            X[X < 0] = 0
+
+        q = np.quantile(X, clip_quantile)
+        X[X > q] = q
         X[X > max_exp] = max_exp
 
         _H = []
@@ -98,7 +124,7 @@ def multisample_nmf(
 
                 model = NMF(
                     n_components=k_val,
-                    init='nndsvda',
+                    init=init,
                     alpha_W=alpha,
                     random_state=seed,
                     tol=tol,
