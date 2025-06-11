@@ -1,0 +1,26 @@
+[project]
+name = "juzi"
+version = "0.0.20"
+description = "juzi"
+authors = [{ name="Tom W. Ouellette" } ]
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+  "anndata",
+  "torch>=2.5.1",
+  "numpy>=1.26.4",
+  "scipy>=1.11.4",
+  "tqdm>=4.66.4",
+  "matplotlib>=3.10.1",
+  "joblib>=1.4.2",
+  "glasbey>=0.2.1"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Homepage = "https://github.com/tomouellette/juzi"
+Issues = "https://github.com/tomouellette/juzi/issues"
