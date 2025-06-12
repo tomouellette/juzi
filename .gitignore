@@ -8,6 +8,7 @@ __pycache__/
 
 # Custom
 build.sh
+push.sh
 
 # Apple OS
 *.DS_Store
