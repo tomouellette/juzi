@@ -11,6 +11,7 @@ build.sh
 push.sh
 docs.py
 docs/
+node_modules/
 
 # Apple OS
 *.DS_Store
