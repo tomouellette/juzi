@@ -1,6 +1,6 @@
 # :tangerine: juzi
 
-Various methods for analyzing cancer cell states and types using single-cell sequencing data (experimental).
+Various methods for analyzing cancer cell states and types in single-cell sequencing data (experimental).
 
 - [Installation](#installation)
 - [Usage](#usage)
