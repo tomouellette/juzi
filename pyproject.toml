@@ -1,6 +1,6 @@
 [project]
 name = "juzi"
-version = "0.1.2"
+version = "0.1.3"
 description = "juzi"
 authors = [{ name="Tom W. Ouellette" } ]
 readme = "README.md"

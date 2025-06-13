@@ -60,7 +60,7 @@ class TestCluster:
         assert "juzi_cluster_stats" in adata.uns
         assert "juzi_cluster_names" in adata.uns
         assert "juzi_cluster_labels" in adata.uns
-        assert "juzi_cluster_linkage" in adata.uns
+        assert "juzi_cluster_G" in adata.uns
         assert "juzi_cluster_similarity" in adata.uns
 
         labels, counts = np.unique(
@@ -80,7 +80,7 @@ class TestCluster:
         assert "juzi_cluster_stats" in adata.uns
         assert "juzi_cluster_names" in adata.uns
         assert "juzi_cluster_labels" in adata.uns
-        assert "juzi_cluster_linkage" in adata.uns
+        assert "juzi_cluster_G" in adata.uns
         assert "juzi_cluster_similarity" in adata.uns
 
         labels, counts = np.unique(
