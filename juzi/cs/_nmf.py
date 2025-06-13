@@ -40,6 +40,7 @@ def nmf(
     silent: bool = False,
 ) -> AnnData:
     """Fit an NMF on each sample individually.
+
     Parameters
     ----------
     adata : AnnData

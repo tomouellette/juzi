@@ -15,6 +15,7 @@ def cluster(
     adata: AnnData,
     threshold: float = 0.1,
     min_cluster: int = 2,
+    reorder: bool = True,
     silent: bool = False,
     copy: bool = False
 ) -> AnnData | None:
@@ -31,6 +32,8 @@ def cluster(
     min_cluster : int
         Minimum number of unique labels/samples contributing. Note that the
         labels/samples were given in the .nmf key argument.
+    reorder : bool
+        If True, cluster labels will be sorted by cluser size (largest first).
     silent : bool
         If True, disable progress bar.
     copy : bool
@@ -83,8 +86,9 @@ def cluster(
         if np.all(counts >= min_cluster):
             break
 
-    idx = _reorder_clusters(S, clusters)
-    S = S[np.ix_(idx, idx)]
+    if reorder:
+        idx = _reorder_clusters(S, clusters)
+        S = S[np.ix_(idx, idx)]
 
     clusters_ = np.array([clusters[i] for i in idx])
     for i, j in enumerate(np.unique(clusters_)):

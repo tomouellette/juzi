@@ -9,6 +9,8 @@ __pycache__/
 # Custom
 build.sh
 push.sh
+docs.py
+docs/
 
 # Apple OS
 *.DS_Store
