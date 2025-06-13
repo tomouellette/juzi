@@ -94,10 +94,14 @@ def cluster(
     for i, j in enumerate(np.unique(clusters_)):
         clusters[clusters_ == j] = i
 
-    adata.uns["juzi_cluster_names"] = [labels[c_mask][i] for i in idx]
-    adata.uns["juzi_cluster_labels"] = clusters
-    adata.uns["juzi_cluster_linkage"] = Z
     adata.uns["juzi_cluster_similarity"] = S
+    adata.uns["juzi_cluster_labels"] = clusters
+
+    adata.uns["juzi_cluster_names"] = np.array(
+        [labels[c_mask][i] for i in idx])
+
+    adata.uns["juzi_cluster_G"] = np.array(
+        [adata.varm["juzi_G"].T[mask][i] for i in idx])
 
     adata.uns["juzi_cluster_stats"] = {
         "silhouette_score": None,
