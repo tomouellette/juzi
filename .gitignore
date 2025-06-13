@@ -12,6 +12,8 @@ push.sh
 docs.py
 docs/
 node_modules/
+package-lock.json
+package.json
 
 # Apple OS
 *.DS_Store
