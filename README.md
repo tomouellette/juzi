@@ -1,6 +1,6 @@
 # :tangerine: juzi
 
-`juzi` is a python package developed for analyzing cancer cell states and types in single-cell data.
+`juzi` is a python package developed for analyzing cancer cell states and types in single-cell RNA sequencing data.
 
 - [Installation](#installation)
 - [Usage](#usage)
