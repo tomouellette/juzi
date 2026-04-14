@@ -175,11 +175,27 @@ def associate(
                 warnings.simplefilter("ignore")
 
                 if use_lmm:
-                    fit = smf.mixedlm(
-                        formula=full_formula,
-                        data=df,
-                        groups=groups,
-                    ).fit(reml=reml, method=method)
+                    try:
+                        fit = smf.mixedlm(
+                            formula=full_formula,
+                            data=df,
+                            groups=groups,
+                        ).fit(reml=reml, method=method)
+                    except (np.linalg.LinAlgError, Exception) as lmm_error:
+                        if "singular" in str(lmm_error).lower():
+                            # Fall back to OLS when LMM covariance is singular
+                            if not silent:
+                                warnings.warn(
+                                    f"LMM singular for {prog}, falling back to OLS.",
+                                    UserWarning,
+                                    stacklevel=2,
+                                )
+                            fit = smf.ols(
+                                formula=full_formula,
+                                data=df,
+                            ).fit()
+                        else:
+                            raise
                 else:
                     fit = smf.ols(
                         formula=full_formula,
