@@ -309,8 +309,8 @@ cp = jz.mg.CancerPathways()
 # Breast cancer subtypes (Parker et al. 2009)
 cb = jz.mg.CancerBreast()
 
-# MSigDB 3CA meta-programs (Gavish et al. 2023)
-mg = jz.mg.MsigDB3CA()
+# 3CA meta-programs (Gavish et al. 2023)
+mg = jz.mg.Hallmark3CA()
 ```
 
 To load your own MSigDB collection:
