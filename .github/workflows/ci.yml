@@ -32,7 +32,7 @@ jobs:
           pip install pytest
 
       - name: Run tests
-        run: pytest tests/
+        run: pytest src/tests/
 
   publish:
     needs: test
@@ -77,7 +77,7 @@ jobs:
       - name: Create GitHub Release and Upload Artifacts
         uses: softprops/action-gh-release@v1
         with:
-          name: Release ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           files: |
             dist/*.whl
