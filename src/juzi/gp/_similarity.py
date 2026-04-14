@@ -8,6 +8,8 @@ from joblib import Parallel, delayed
 from typing import Callable
 from tqdm import tqdm
 
+from ._nmf import _recompute_keep
+
 
 def similarity(
     adata: AnnData,
@@ -15,7 +17,6 @@ def similarity(
     top_k: int | None = 50,
     intra_sample: bool = True,
     drop_zeros: bool = True,
-    min_similarity: float = 0.2,
     n_jobs: int = 1,
     prefer: str | None = None,
     silent: bool = False,
@@ -25,8 +26,8 @@ def similarity(
 
     Builds a symmetric factor × factor similarity matrix using either Jaccard
     similarity on top-loaded genes or a user-provided distance function.
-    Factors that are all-zero or fall below min_similarity are flagged in
-    juzi_keep for exclusion from downstream clustering.
+    Factors whose entire similarity row is zero are flagged in
+    juzi_keep_similarity when drop_zeros=True.
 
     Parameters
     ----------
@@ -44,11 +45,8 @@ def similarity(
         intra-sample entries remain zero.
     drop_zeros : bool
         If True, flag factors whose entire similarity row is zero in
-        juzi_keep. These factors have no similarity to any other factor
-        and contribute nothing to consensus program detection.
-    min_similarity : float
-        Flag factors whose maximum similarity to any other factor is below
-        this threshold in juzi_keep. Must be in [0, 1].
+        juzi_keep_similarity. These factors have no similarity to any
+        other factor and contribute nothing to consensus program detection.
     n_jobs : int
         Number of parallel workers.
     prefer : str | None
@@ -62,20 +60,23 @@ def similarity(
     -------
     AnnData | None
         AnnData with the following fields populated:
-            .uns["juzi_similarity"] : factor × factor similarity matrix
-            .uns["juzi_keep"]       : updated boolean mask
+            .uns["juzi_similarity"]      : factor × factor similarity matrix
+            .uns["juzi_keep_similarity"] : boolean mask updated by drop_zeros
+            .uns["juzi_keep"]            : intersection of all three stage masks
     """
     adata = adata.copy() if copy else adata
 
     # Validate
 
     for field, store in [
-        ("juzi_G", "varm"),
-        ("juzi_k", "uns"),
+        ("juzi_G",     "varm"),
+        ("juzi_k",     "uns"),
         ("juzi_names", "uns"),
     ]:
         if field not in getattr(adata, store):
-            raise KeyError(f"'{field}' not found in .{store}. Run juzi.gp.nmf first.")
+            raise KeyError(
+                f"'{field}' not found in .{store}. Run juzi.gp.nmf first."
+            )
 
     if distance != "jaccard" and not callable(distance):
         raise ValueError("distance must be 'jaccard' or a callable.")
@@ -86,27 +87,16 @@ def similarity(
     if top_k is not None and top_k < 1:
         raise ValueError("top_k must be a positive integer.")
 
-    if not 0.0 <= min_similarity <= 1.0:
-        raise ValueError("min_similarity must be in [0, 1].")
-
     if callable(distance):
         _validate_distance_fn(distance)
 
     # Setup
 
-    G = adata.varm["juzi_G"].T  # (n_factors × n_genes)
+    G     = adata.varm["juzi_G"].T # (n_factors × n_genes)
     names = np.array(adata.uns["juzi_names"])
-    n = G.shape[0]
-
-    # Initialise juzi_keep if not present (i.e. prune was not run)
-    if "juzi_keep" not in adata.uns:
-        adata.uns["juzi_keep"] = np.ones(n, dtype=bool)
-
-    keep = adata.uns["juzi_keep"]
+    n     = G.shape[0]
 
     # Build index pairs
-    # Only compute upper triangle — result is symmetric
-    # Optionally skip intra-sample pairs
 
     rows, cols = np.triu_indices(n, k=1)
 
@@ -140,18 +130,84 @@ def similarity(
         sim[i, j] = s_xy
         sim[j, i] = s_xy
 
-    # Update juzi_keep
-    # Apply both filters in a single pass — flag factors that are
-    # all-zero or fall below min_similarity threshold
+    adata.uns["juzi_similarity"] = sim
+
+    # Update juzi_keep_similarity
+    # Reset to all True then apply drop_zeros filter only
+    # min_similarity filtering is handled separately by select_similarity
+
+    keep_sim = np.ones(n, dtype=bool)
 
     if drop_zeros:
-        keep[np.isclose(sim, 0).all(axis=1)] = False
+        keep_sim[np.isclose(sim, 0).all(axis=1)] = False
 
-    if min_similarity > 0.0:
-        keep[sim.max(axis=1) < min_similarity] = False
+    adata.uns["juzi_keep_similarity"] = keep_sim
+    _recompute_keep(adata)
 
-    adata.uns["juzi_keep"] = keep
-    adata.uns["juzi_similarity"] = sim
+    return adata if copy else None
+
+
+def select_similarity(
+    adata: AnnData,
+    min_similarity: float,
+    copy: bool = False,
+) -> AnnData | None:
+    """Filter factors by minimum similarity threshold.
+
+    Updates juzi_keep_similarity to flag factors whose maximum similarity
+    to any other factor falls below min_similarity. Can be re-run with
+    different thresholds without re-running juzi.gp.similarity.
+
+    Use juzi.pl.similarity to inspect the min_similarity vs factors
+    retained curve before choosing a threshold.
+
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData object with juzi_similarity in .uns, produced by
+        juzi.gp.similarity.
+    min_similarity : float
+        Minimum similarity threshold. Factors whose maximum similarity
+        to any other factor is below this value are flagged in
+        juzi_keep_similarity. Must be in [0, 1].
+    copy : bool
+        If True, return a modified copy. If False, modify in place.
+
+    Returns
+    -------
+    AnnData | None
+        AnnData with the following fields updated:
+            .uns["juzi_keep_similarity"] : updated boolean mask
+            .uns["juzi_keep"]            : intersection of all three stage masks
+    """
+    adata = adata.copy() if copy else adata
+
+    # Validate
+
+    if "juzi_similarity" not in adata.uns:
+        raise KeyError(
+            "'juzi_similarity' not found in .uns. "
+            "Run juzi.gp.similarity first."
+        )
+
+    if not 0.0 <= min_similarity <= 1.0:
+        raise ValueError("min_similarity must be in [0, 1].")
+
+    # Apply threshold
+
+    sim      = adata.uns["juzi_similarity"]
+    n        = sim.shape[0]
+
+    # Start from drop_zeros result if already computed, otherwise all True
+    keep_sim = adata.uns.get(
+        "juzi_keep_similarity", np.ones(n, dtype=bool)
+    ).copy()
+
+    # Apply min_similarity on top of existing drop_zeros mask
+    keep_sim[sim.max(axis=1) < min_similarity] = False
+
+    adata.uns["juzi_keep_similarity"] = keep_sim
+    _recompute_keep(adata)
 
     return adata if copy else None
 
@@ -197,13 +253,12 @@ def _similarity(
     """
     x, y = G[i], G[j]
 
-    # Zero vectors have no meaningful similarity
     if np.sum(x) == 0 or np.sum(y) == 0:
         return (i, j, 0.0)
 
     if distance == "jaccard":
-        top_x = np.argsort(x)[-int(top_k) :]
-        top_y = np.argsort(y)[-int(top_k) :]
+        top_x = np.argsort(x)[-int(top_k):]
+        top_y = np.argsort(y)[-int(top_k):]
         union = np.union1d(top_x, top_y)
 
         if len(union) == 0:
@@ -214,8 +269,8 @@ def _similarity(
     else:
         if top_k is not None:
             union = np.union1d(
-                np.argsort(x)[-int(top_k) :],
-                np.argsort(y)[-int(top_k) :],
+                np.argsort(x)[-int(top_k):],
+                np.argsort(y)[-int(top_k):],
             )
             x, y = x[union], y[union]
 

@@ -9,6 +9,8 @@ from scipy.optimize import linear_sum_assignment
 from typing import List
 from tqdm import tqdm
 
+from ._nmf import _recompute_keep
+
 
 def prune(
     adata: AnnData,
@@ -62,25 +64,28 @@ def prune(
     Returns
     -------
     AnnData | None
-        AnnData with juzi_keep added to .uns — a boolean mask of length
-        equal to the number of factors in juzi_G indicating which factors
-        passed the recurrence filter.
+        AnnData with the following fields updated:
+            .uns["juzi_keep_prune"] : boolean mask of recurrent factors
+            .uns["juzi_keep"]       : intersection of all three stage masks
     """
     adata = adata.copy() if copy else adata
 
     # Validate
 
     for field, store in [
-        ("juzi_G", "varm"),
-        ("juzi_k", "uns"),
+        ("juzi_G",     "varm"),
+        ("juzi_k",     "uns"),
         ("juzi_names", "uns"),
     ]:
         if field not in getattr(adata, store):
-            raise KeyError(f"'{field}' not found in .{store}. Run juzi.gp.nmf first.")
+            raise KeyError(
+                f"'{field}' not found in .{store}. Run juzi.gp.nmf first."
+            )
 
     if top_k > adata.n_vars:
         raise ValueError(
-            f"top_k={top_k} exceeds number of genes ({adata.n_vars}). " "Lower top_k."
+            f"top_k={top_k} exceeds number of genes ({adata.n_vars}). "
+            "Lower top_k."
         )
 
     if not 0.0 <= min_similarity <= 1.0:
@@ -98,10 +103,10 @@ def prune(
 
     # Split juzi_G into per-sample factor blocks
 
-    names = np.array(adata.uns["juzi_names"])
-    G = adata.varm["juzi_G"].T  # (n_total_factors × n_genes)
-    k_list = adata.uns["juzi_k"]
-    n_comps = int(np.sum(k_list))
+    names    = np.array(adata.uns["juzi_names"])
+    G        = adata.varm["juzi_G"].T # (n_total_factors × n_genes)
+    k_list   = adata.uns["juzi_k"]
+    n_comps  = int(np.sum(k_list))
     n_unique = len(np.unique(names))
 
     if len(names) != n_unique * n_comps:
@@ -134,15 +139,18 @@ def prune(
 
     # Build global boolean keep mask
 
-    mask = np.zeros(len(names), dtype=bool)
+    mask               = np.zeros(len(names), dtype=bool)
     cumulative_offsets = np.arange(n_unique) * n_comps
 
     for sample_idx, local_keep_idx in enumerate(results):
         if len(local_keep_idx) > 0:
-            global_idx = cumulative_offsets[sample_idx] + local_keep_idx
-            mask[global_idx] = True
+            global_idx          = cumulative_offsets[sample_idx] + local_keep_idx
+            mask[global_idx]    = True
 
-    adata.uns["juzi_keep"] = mask
+    # Update stage mask and recompute juzi_keep
+
+    adata.uns["juzi_keep_prune"] = mask
+    _recompute_keep(adata)
 
     return adata if copy else None
 
@@ -159,20 +167,7 @@ def _similarity_matrix(
     top_genes_a: list[set],
     top_genes_b: list[set],
 ) -> np.ndarray:
-    """Compute pairwise Jaccard similarity matrix between two sets of factors.
-
-    Parameters
-    ----------
-    top_genes_a : list[set]
-        Top-gene sets for factors in resolution a.
-    top_genes_b : list[set]
-        Top-gene sets for factors in resolution b.
-
-    Returns
-    -------
-    np.ndarray
-        Similarity matrix of shape (len(top_genes_a), len(top_genes_b)).
-    """
+    """Compute pairwise Jaccard similarity matrix between two sets of factors."""
     sim = np.zeros((len(top_genes_a), len(top_genes_b)))
     for i, genes_i in enumerate(top_genes_a):
         for j, genes_j in enumerate(top_genes_b):
@@ -186,7 +181,7 @@ def _match_greedy(
     min_similarity: float,
 ) -> set[int]:
     """Return indices in a that have at least one match in b above threshold."""
-    sim = _similarity_matrix(top_genes_a, top_genes_b)
+    sim        = _similarity_matrix(top_genes_a, top_genes_b)
     best_per_a = sim.max(axis=1)
     return set(np.where(best_per_a >= min_similarity)[0].tolist())
 
@@ -196,14 +191,9 @@ def _match_hungarian(
     top_genes_b: list[set],
     min_similarity: float,
 ) -> set[int]:
-    """Return indices in a matched to a unique factor in b above threshold.
-
-    Uses the Hungarian algorithm to find the globally optimal one-to-one
-    assignment, preventing two factors in a from competing for the same
-    factor in b.
-    """
-    sim = _similarity_matrix(top_genes_a, top_genes_b)
-    row_idx, col_idx = linear_sum_assignment(-sim)
+    """Return indices in a matched to a unique factor in b above threshold."""
+    sim                  = _similarity_matrix(top_genes_a, top_genes_b)
+    row_idx, col_idx     = linear_sum_assignment(-sim)
     return {r for r, c in zip(row_idx, col_idx) if sim[r, c] >= min_similarity}
 
 
@@ -221,7 +211,6 @@ def _prune(
     ----------
     factors : np.ndarray
         Factor loading matrix for one sample, shape (sum(k) × n_genes).
-        Rows are ordered by k resolution: first k[0] factors, then k[1], etc.
     k : List[int]
         List of factorisation ranks used.
     top_k : int
@@ -236,25 +225,21 @@ def _prune(
     Returns
     -------
     np.ndarray
-        Local indices of factors that passed the recurrence filter,
-        relative to the start of this sample's factor block.
+        Local indices of factors that passed the recurrence filter.
     """
-    split_points = np.cumsum(k)[:-1]
-    factors_by_k = np.split(factors, split_points)
+    split_points  = np.cumsum(k)[:-1]
+    factors_by_k  = np.split(factors, split_points)
 
-    # Precompute top-gene sets for all factors across all resolutions
     top_genes_by_k = [
         [set(np.argsort(factor)[-top_k:]) for factor in resolution]
         for resolution in factors_by_k
     ]
 
-    match_fn = _match_hungarian if matching == "hungarian" else _match_greedy
-
-    keep_local_idx = []
+    match_fn           = _match_hungarian if matching == "hungarian" else _match_greedy
+    keep_local_idx     = []
     cumulative_offsets = np.concatenate([[0], np.cumsum(k)])
 
     for k_idx, resolution_genes in enumerate(top_genes_by_k):
-        # Count matching resolutions for each factor in this resolution
         n_matching = np.zeros(len(resolution_genes), dtype=int)
 
         for other_k_idx, other_resolution_genes in enumerate(top_genes_by_k):

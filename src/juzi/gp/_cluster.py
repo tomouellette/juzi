@@ -10,6 +10,8 @@ from typing import Tuple
 from scipy.cluster.hierarchy import ClusterWarning
 from sklearn.metrics import silhouette_score
 
+from ._nmf import _recompute_keep
+
 
 def cluster(
     adata: AnnData,
@@ -25,6 +27,12 @@ def cluster(
     threshold. Clusters with fewer than min_cluster unique contributing
     samples are removed and the procedure repeats until all remaining
     clusters meet the minimum sample requirement.
+
+    Factors removed by min_cluster are tracked in juzi_keep_cluster.
+    juzi_keep is recomputed as the intersection of juzi_keep_prune,
+    juzi_keep_similarity, and juzi_keep_cluster. Re-running cluster
+    with different parameters only updates juzi_keep_cluster — upstream
+    masks are never modified.
 
     Parameters
     ----------
@@ -48,10 +56,15 @@ def cluster(
     -------
     AnnData | None
         AnnData with the following fields populated:
+            .uns["juzi_keep_cluster"]       : boolean mask of factors retained
+                                              after min_cluster filtering
+            .uns["juzi_keep"]               : intersection of all three stage masks
             .uns["juzi_cluster_similarity"] : reordered factor similarity matrix
-            .uns["juzi_cluster_labels"]     : cluster label per factor
+            .uns["juzi_cluster_labels"]     : cluster label per retained factor
+            .uns["juzi_cluster_names"]      : donor name per retained factor,
+                                              aligned to juzi_cluster_labels
             .uns["juzi_cluster_G"]          : centroid gene loading per cluster
-            .uns["juzi_cluster_samples"]    : sample names contributing per cluster
+            .uns["juzi_cluster_samples"]    : unique sample names per cluster
             .uns["juzi_cluster_stats"]      : silhouette, inner/outer similarity
     """
     adata = adata.copy() if copy else adata
@@ -75,23 +88,24 @@ def cluster(
     if min_cluster < 1:
         raise ValueError("min_cluster must be >= 1.")
 
-    # Initialise mask
+    # Initialise juzi_keep_cluster
+    # Reset to all True at the start of each cluster run so re-running
+    # with different parameters gives a clean slate for this stage mask.
 
-    n_factors  = adata.uns["juzi_similarity"].shape[0]
-    mask       = (
-        np.array(adata.uns["juzi_keep"], dtype=bool)
-        if "juzi_keep" in adata.uns
-        else np.ones(n_factors, dtype=bool)
-    )
+    n_factors = adata.uns["juzi_similarity"].shape[0]
+    adata.uns["juzi_keep_cluster"] = np.ones(n_factors, dtype=bool)
+    _recompute_keep(adata)
 
     full_G     = adata.varm["juzi_G"].T # (n_factors × n_genes)
     full_names = np.array(adata.uns["juzi_names"])
 
     # Iterative clustering
 
+    cluster_mask = adata.uns["juzi_keep"].copy()
+
     while True:
-        S     = adata.uns["juzi_similarity"][np.ix_(mask, mask)]
-        names = full_names[mask]
+        S     = adata.uns["juzi_similarity"][np.ix_(cluster_mask, cluster_mask)]
+        names = full_names[cluster_mask]
         n     = S.shape[0]
 
         if n == 0:
@@ -100,7 +114,6 @@ def cluster(
                 "Lower min_similarity or min_cluster thresholds."
             )
 
-        # Initial leaf ordering via hierarchical clustering
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ClusterWarning)
             Z = sp.cluster.hierarchy.linkage(
@@ -112,7 +125,6 @@ def cluster(
         for new_label, position in enumerate(leaf_order):
             clusters[position] = new_label
 
-        # Iterative merging until threshold is met
         while True:
             max_pair = _find_max_similar(S, clusters, threshold)
             if max_pair is None:
@@ -120,7 +132,6 @@ def cluster(
             i, j = max_pair
             clusters[clusters == clusters[j]] = clusters[i]
 
-        # Check min_cluster requirement per cluster
         unique_clusters = np.unique(clusters)
         sample_counts   = np.array([
             len(np.unique(names[clusters == c]))
@@ -132,18 +143,19 @@ def cluster(
         if passes.all():
             break
 
-        # Remove factors belonging to under-represented clusters
         keep_clusters = unique_clusters[passes]
         factor_passes = np.isin(clusters, keep_clusters)
-        mask_indices  = np.where(mask)[0]
-        mask[mask_indices[~factor_passes]] = False
-        adata.uns["juzi_keep"] = mask
+        mask_indices  = np.where(cluster_mask)[0]
+        cluster_mask[mask_indices[~factor_passes]] = False
+
+    # Update juzi_keep_cluster and recompute juzi_keep
+
+    adata.uns["juzi_keep_cluster"] = cluster_mask
+    _recompute_keep(adata)
 
     # Reorder
-    # Extract G_masked here so reorder_idx can be applied consistently
-    # to G, S, names, and clusters in one place
 
-    G_masked = full_G[mask]
+    G_masked = full_G[cluster_mask]
 
     if reorder:
         reorder_idx = _reorder_clusters(S, clusters)
@@ -153,9 +165,6 @@ def cluster(
         G_masked    = G_masked[reorder_idx]
 
     # Remap cluster labels
-    # Use first-appearance order so label 0 = first cluster in array =
-    # largest cluster when reorder=True. Avoid in-place collision by
-    # writing to a separate array.
 
     _, first_occurrence = np.unique(clusters, return_index=True)
     ordered_old         = clusters[np.sort(first_occurrence)]
@@ -166,7 +175,6 @@ def cluster(
     clusters = remapped
 
     # Centroid gene loadings
-    # G_masked and clusters are now aligned — both reordered or both not
 
     unique_clusters = np.unique(clusters)
     cluster_G       = np.array([
@@ -205,6 +213,7 @@ def cluster(
 
     adata.uns["juzi_cluster_similarity"] = S
     adata.uns["juzi_cluster_labels"]     = clusters
+    adata.uns["juzi_cluster_names"]      = names.tolist()
     adata.uns["juzi_cluster_G"]          = cluster_G
     adata.uns["juzi_cluster_samples"]    = cluster_samples
     adata.uns["juzi_cluster_stats"]      = {
@@ -221,23 +230,7 @@ def _find_max_similar(
     clusters: np.ndarray,
     threshold: float,
 ) -> Tuple[int, int] | None:
-    """Find the pair of clusters with the highest mean inter-cluster similarity.
-
-    Parameters
-    ----------
-    S : np.ndarray
-        Symmetric similarity matrix, shape (n_factors × n_factors).
-    clusters : np.ndarray
-        Cluster label per factor.
-    threshold : float
-        Only return a pair if their mean similarity exceeds this value.
-
-    Returns
-    -------
-    Tuple[int, int] | None
-        Indices of one factor from each of the two most similar clusters,
-        or None if no pair exceeds threshold.
-    """
+    """Find the pair of clusters with the highest mean inter-cluster similarity."""
     c_unique, first_indices = np.unique(clusters, return_index=True)
     c_counts                = np.array([np.sum(clusters == c) for c in c_unique])
 
@@ -260,20 +253,7 @@ def _reorder_clusters(
     S: np.ndarray,
     clusters: np.ndarray,
 ) -> np.ndarray:
-    """Reorder factors so clusters are sorted by size and internally by similarity.
-
-    Parameters
-    ----------
-    S : np.ndarray
-        Symmetric similarity matrix, shape (n_factors × n_factors).
-    clusters : np.ndarray
-        Cluster label per factor.
-
-    Returns
-    -------
-    np.ndarray
-        Reordered factor indices.
-    """
+    """Reorder factors so clusters are sorted by size and internally by similarity."""
     c_unique = np.unique(clusters)
     c_sizes  = {c: np.sum(clusters == c) for c in c_unique}
     c_sorted = sorted(c_unique, key=lambda c: c_sizes[c], reverse=True)

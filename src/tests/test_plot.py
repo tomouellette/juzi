@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from anndata import AnnData
 import juzi as jz
 
-matplotlib.use("Agg")  # non-interactive backend for testing
+matplotlib.use("Agg")
 
 
 # Fixtures
@@ -45,11 +45,10 @@ def make_adata(
         var={"gene_name": np.arange(n_genes).astype(str)},
     )
 
-    # Add a fake UMAP embedding
     adata.obsm["X_umap"] = rng.normal(size=(len(labels), 2)).astype(np.float32)
 
     adata = jz.gp.nmf(adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed)
-    jz.gp.similarity(adata, distance="jaccard", top_k=20, min_similarity=0.0)
+    jz.gp.similarity(adata, distance="jaccard", top_k=20)
     jz.gp.cluster(adata, threshold=0.3, min_cluster=1)
     jz.gp.score(adata, n_top_genes=10, seed=seed)
     jz.gp.aggregate(adata, key="donor_id", obs_cols=["age", "study_id"])
@@ -62,15 +61,9 @@ def make_adata(
 
 
 class TestPlSimilarity:
-    def test_error_missing_cluster_similarity(self):
+    def test_error_missing_juzi_similarity(self):
         adata = make_adata()
-        del adata.uns["juzi_cluster_similarity"]
-        with pytest.raises(KeyError):
-            jz.pl.similarity(adata)
-
-    def test_error_missing_cluster_labels(self):
-        adata = make_adata()
-        del adata.uns["juzi_cluster_labels"]
+        del adata.uns["juzi_similarity"]
         with pytest.raises(KeyError):
             jz.pl.similarity(adata)
 
@@ -87,29 +80,77 @@ class TestPlSimilarity:
         assert result is ax
         plt.close("all")
 
+    def test_custom_thresholds(self):
+        adata = make_adata()
+        ax = jz.pl.similarity(adata, thresholds=np.linspace(0, 1, 20))
+        assert isinstance(ax, plt.Axes)
+        plt.close("all")
+
+    def test_custom_color(self):
+        adata = make_adata()
+        ax = jz.pl.similarity(adata, color="#ff0000")
+        assert isinstance(ax, plt.Axes)
+        plt.close("all")
+
+    def test_custom_figsize(self):
+        adata = make_adata()
+        ax = jz.pl.similarity(adata, figsize=(6, 4))
+        assert isinstance(ax, plt.Axes)
+        plt.close("all")
+
+
+# juzi.pl.heatmap
+
+
+class TestPlHeatmap:
+    def test_error_missing_cluster_similarity(self):
+        adata = make_adata()
+        del adata.uns["juzi_cluster_similarity"]
+        with pytest.raises(KeyError):
+            jz.pl.heatmap(adata)
+
+    def test_error_missing_cluster_labels(self):
+        adata = make_adata()
+        del adata.uns["juzi_cluster_labels"]
+        with pytest.raises(KeyError):
+            jz.pl.heatmap(adata)
+
+    def test_returns_axes(self):
+        adata = make_adata()
+        ax = jz.pl.heatmap(adata)
+        assert isinstance(ax, plt.Axes)
+        plt.close("all")
+
+    def test_accepts_ax(self):
+        adata = make_adata()
+        fig, ax = plt.subplots()
+        result = jz.pl.heatmap(adata, ax=ax)
+        assert result is ax
+        plt.close("all")
+
     def test_custom_palette(self):
         adata = make_adata()
         labels = np.unique(adata.uns["juzi_cluster_labels"])
         palette = {int(c): "#ff0000" for c in labels}
-        ax = jz.pl.similarity(adata, palette=palette)
+        ax = jz.pl.heatmap(adata, palette=palette)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_vmin_vmax(self):
         adata = make_adata()
-        ax = jz.pl.similarity(adata, vmin=0.1, vmax=0.9)
+        ax = jz.pl.heatmap(adata, vmin=0.1, vmax=0.9)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_no_cluster_colors(self):
         adata = make_adata()
-        ax = jz.pl.similarity(adata, add_cluster_colors=False)
+        ax = jz.pl.heatmap(adata, add_cluster_colors=False)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_no_cluster_labels(self):
         adata = make_adata()
-        ax = jz.pl.similarity(adata, add_cluster_labels=False)
+        ax = jz.pl.heatmap(adata, add_cluster_labels=False)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
@@ -177,9 +218,7 @@ class TestPlLoadings:
         plt.close("all")
 
     def test_single_program(self):
-        """Should not crash when only one program exists."""
         adata = make_adata()
-        # Force single program by overwriting cluster labels
         adata.uns["juzi_cluster_labels"] = np.zeros(
             len(adata.uns["juzi_cluster_labels"]), dtype=int
         )

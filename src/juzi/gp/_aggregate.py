@@ -137,7 +137,9 @@ def aggregate(
 
         # Take first value per donor — these should be donor-level constants
         covariate_df = (
-            obs_df.groupby(key, sort=False)[obs_cols].first().loc[valid_donors]
+            obs_df.groupby(key, sort=False, observed=True)[obs_cols]
+            .first()
+            .loc[valid_donors]
         )
 
         agg_df = pd.concat([agg_df, covariate_df], axis=1)

@@ -22,13 +22,13 @@ def make_adata(
     """AnnData fit through full pipeline, ready for annotate."""
     rng = np.random.default_rng(seed)
 
-    profile_a = rng.normal(5.0,  1.0, size=(1, n_genes))
+    profile_a = rng.normal(5.0, 1.0, size=(1, n_genes))
     profile_b = rng.normal(20.0, 1.0, size=(1, n_genes))
 
     blocks, labels = [], []
     for i in range(n_samples):
-        profile  = profile_a if i % 2 == 0 else profile_b
-        noise    = rng.normal(0.0, 0.5, size=(n_cells_per_sample, n_genes))
+        profile = profile_a if i % 2 == 0 else profile_b
+        noise = rng.normal(0.0, 0.5, size=(n_cells_per_sample, n_genes))
         X_sample = np.clip(profile + noise, 0, None)
         blocks.append(X_sample)
         labels.extend([f"sample_{i}"] * n_cells_per_sample)
@@ -40,7 +40,7 @@ def make_adata(
     )
 
     adata = jz.gp.nmf(adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed)
-    jz.gp.similarity(adata, distance="jaccard", top_k=20, min_similarity=0.0)
+    jz.gp.similarity(adata, distance="jaccard", top_k=20)
     jz.gp.cluster(adata, threshold=0.3, min_cluster=1)
 
     return adata
@@ -48,12 +48,12 @@ def make_adata(
 
 def make_gene_sets(adata: AnnData, n_sets: int = 5, seed: int = 0) -> dict:
     """Make synthetic gene sets with guaranteed overlap with juzi_G_genes."""
-    rng       = np.random.default_rng(seed)
+    rng = np.random.default_rng(seed)
     all_genes = adata.uns["juzi_G_genes"]
     gene_sets = {}
     for i in range(n_sets):
-        size             = rng.integers(10, 30)
-        genes            = rng.choice(all_genes, size=size, replace=False).tolist()
+        size = rng.integers(10, 30)
+        genes = rng.choice(all_genes, size=size, replace=False).tolist()
         gene_sets[f"GS_{i}"] = genes
     return gene_sets
 
@@ -62,7 +62,6 @@ def make_gene_sets(adata: AnnData, n_sets: int = 5, seed: int = 0) -> dict:
 
 
 class TestGpAnnotate:
-
     def test_error_missing_cluster_G(self):
         adata = make_adata()
         del adata.uns["juzi_cluster_G"]
@@ -126,18 +125,25 @@ class TestGpAnnotate:
         jz.gp.annotate(adata, gene_sets=make_gene_sets(adata))
         df = adata.uns["juzi_annotation"]
         for col in [
-            "program", "gene_set", "jaccard", "n_overlap",
-            "n_program", "n_geneset", "n_background", "pval", "padj",
+            "program",
+            "gene_set",
+            "jaccard",
+            "n_overlap",
+            "n_program",
+            "n_geneset",
+            "n_background",
+            "pval",
+            "padj",
             "overlap_genes",
         ]:
             assert col in df.columns
 
     def test_annotation_row_count(self):
         """Should have one row per program × gene_set pair."""
-        adata     = make_adata()
+        adata = make_adata()
         gene_sets = make_gene_sets(adata, n_sets=5)
         jz.gp.annotate(adata, gene_sets=gene_sets)
-        df         = adata.uns["juzi_annotation"]
+        df = adata.uns["juzi_annotation"]
         n_programs = len(np.unique(adata.uns["juzi_cluster_labels"]))
         assert len(df) == n_programs * len(gene_sets)
 
@@ -145,7 +151,7 @@ class TestGpAnnotate:
         """Program column should contain C0, C1, ... format."""
         adata = make_adata()
         jz.gp.annotate(adata, gene_sets=make_gene_sets(adata))
-        df      = adata.uns["juzi_annotation"]
+        df = adata.uns["juzi_annotation"]
         pattern = r"^C\d+$"
         assert df["program"].str.match(pattern).all()
 
@@ -214,7 +220,7 @@ class TestGpAnnotate:
     # Gene set input variants
 
     def test_accepts_plain_dict(self):
-        adata     = make_adata()
+        adata = make_adata()
         gene_sets = make_gene_sets(adata)
         jz.gp.annotate(adata, gene_sets=gene_sets)
         assert "juzi_annotation" in adata.uns
@@ -232,7 +238,7 @@ class TestGpAnnotate:
 
     def test_mg_object_equivalent_to_dict(self):
         """as_dict() object and plain dict should produce identical results."""
-        adata     = make_adata()
+        adata = make_adata()
         gene_sets = make_gene_sets(adata, seed=0)
 
         class FakeGeneSet:
@@ -240,10 +246,10 @@ class TestGpAnnotate:
                 return gene_sets
 
         adata_dict = make_adata(seed=42)
-        adata_obj  = make_adata(seed=42)
+        adata_obj = make_adata(seed=42)
 
         jz.gp.annotate(adata_dict, gene_sets=gene_sets)
-        jz.gp.annotate(adata_obj,  gene_sets=FakeGeneSet())
+        jz.gp.annotate(adata_obj, gene_sets=FakeGeneSet())
 
         pd.testing.assert_frame_equal(
             adata_dict.uns["juzi_annotation"],
@@ -264,9 +270,13 @@ class TestGpAnnotate:
 
     def test_specificity_affects_results(self):
         adata_spec = make_adata(seed=0)
-        adata_raw  = make_adata(seed=0)
-        jz.gp.annotate(adata_spec, gene_sets=make_gene_sets(adata_spec), use_specificity=True)
-        jz.gp.annotate(adata_raw,  gene_sets=make_gene_sets(adata_raw),  use_specificity=False)
+        adata_raw = make_adata(seed=0)
+        jz.gp.annotate(
+            adata_spec, gene_sets=make_gene_sets(adata_spec), use_specificity=True
+        )
+        jz.gp.annotate(
+            adata_raw, gene_sets=make_gene_sets(adata_raw), use_specificity=False
+        )
         assert not adata_spec.uns["juzi_annotation"]["jaccard"].equals(
             adata_raw.uns["juzi_annotation"]["jaccard"]
         )
@@ -274,13 +284,13 @@ class TestGpAnnotate:
     # copy parameter
 
     def test_copy_false_modifies_inplace(self):
-        adata  = make_adata()
+        adata = make_adata()
         result = jz.gp.annotate(adata, gene_sets=make_gene_sets(adata), copy=False)
         assert result is None
         assert "juzi_annotation" in adata.uns
 
     def test_copy_true_returns_new_object(self):
-        adata  = make_adata()
+        adata = make_adata()
         result = jz.gp.annotate(adata, gene_sets=make_gene_sets(adata), copy=True)
         assert result is not None
         assert "juzi_annotation" not in adata.uns
@@ -291,9 +301,8 @@ class TestGpAnnotate:
 
 
 class TestPlAnnotate:
-
     def make_adata_annotated(self, seed: int = 42) -> AnnData:
-        adata     = make_adata(seed=seed)
+        adata = make_adata(seed=seed)
         gene_sets = make_gene_sets(adata, n_sets=10, seed=seed)
         jz.gp.annotate(adata, gene_sets=gene_sets)
         return adata
@@ -326,57 +335,57 @@ class TestPlAnnotate:
 
     def test_returns_axes(self):
         adata = self.make_adata_annotated()
-        ax    = jz.pl.annotate(adata, padj_thresh=1.0)
+        ax = jz.pl.annotate(adata, padj_thresh=1.0)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_accepts_ax(self):
-        adata   = self.make_adata_annotated()
+        adata = self.make_adata_annotated()
         fig, ax = plt.subplots()
-        result  = jz.pl.annotate(adata, padj_thresh=1.0, ax=ax)
+        result = jz.pl.annotate(adata, padj_thresh=1.0, ax=ax)
         assert result is ax
         plt.close("all")
 
     def test_no_colorbar(self):
         adata = self.make_adata_annotated()
-        ax    = jz.pl.annotate(adata, padj_thresh=1.0, show_colorbar=False)
+        ax = jz.pl.annotate(adata, padj_thresh=1.0, show_colorbar=False)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_no_legend(self):
         adata = self.make_adata_annotated()
-        ax    = jz.pl.annotate(adata, padj_thresh=1.0, show_legend=False)
+        ax = jz.pl.annotate(adata, padj_thresh=1.0, show_legend=False)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_custom_top_n(self):
         adata = self.make_adata_annotated()
-        ax    = jz.pl.annotate(adata, padj_thresh=1.0, top_n=3)
+        ax = jz.pl.annotate(adata, padj_thresh=1.0, top_n=3)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_custom_cmap(self):
         adata = self.make_adata_annotated()
-        ax    = jz.pl.annotate(adata, padj_thresh=1.0, cmap="Blues")
+        ax = jz.pl.annotate(adata, padj_thresh=1.0, cmap="Blues")
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_custom_palette(self):
-        adata   = self.make_adata_annotated()
-        labels  = np.unique(adata.uns["juzi_cluster_labels"])
+        adata = self.make_adata_annotated()
+        labels = np.unique(adata.uns["juzi_cluster_labels"])
         palette = {int(c): "#ff0000" for c in labels}
-        ax      = jz.pl.annotate(adata, padj_thresh=1.0, palette=palette)
+        ax = jz.pl.annotate(adata, padj_thresh=1.0, palette=palette)
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_custom_figsize(self):
         adata = self.make_adata_annotated()
-        ax    = jz.pl.annotate(adata, padj_thresh=1.0, figsize=(8, 6))
+        ax = jz.pl.annotate(adata, padj_thresh=1.0, figsize=(8, 6))
         assert isinstance(ax, plt.Axes)
         plt.close("all")
 
     def test_custom_dot_scale(self):
         adata = self.make_adata_annotated()
-        ax    = jz.pl.annotate(adata, padj_thresh=1.0, dot_scale=200.)
+        ax = jz.pl.annotate(adata, padj_thresh=1.0, dot_scale=200.0)
         assert isinstance(ax, plt.Axes)
         plt.close("all")

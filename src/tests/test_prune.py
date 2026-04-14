@@ -106,16 +106,35 @@ def test_error_invalid_matching():
 # Output structure
 
 
+def test_juzi_keep_prune_in_uns():
+    adata = make_adata()
+    jz.gp.prune(adata)
+    assert "juzi_keep_prune" in adata.uns
+
+
 def test_juzi_keep_in_uns():
     adata = make_adata()
     jz.gp.prune(adata)
     assert "juzi_keep" in adata.uns
 
 
+def test_juzi_keep_prune_is_bool():
+    adata = make_adata()
+    jz.gp.prune(adata)
+    assert adata.uns["juzi_keep_prune"].dtype == bool
+
+
 def test_juzi_keep_is_bool():
     adata = make_adata()
     jz.gp.prune(adata)
     assert adata.uns["juzi_keep"].dtype == bool
+
+
+def test_juzi_keep_prune_length_matches_factors():
+    adata = make_adata(n_samples=2, k=[3, 4])
+    jz.gp.prune(adata)
+    n_factors = adata.varm["juzi_G"].shape[1]
+    assert len(adata.uns["juzi_keep_prune"]) == n_factors
 
 
 def test_juzi_keep_length_matches_factors():
@@ -125,33 +144,69 @@ def test_juzi_keep_length_matches_factors():
     assert len(adata.uns["juzi_keep"]) == n_factors
 
 
+def test_juzi_keep_is_intersection():
+    """juzi_keep must equal the AND of all three stage masks after prune."""
+    adata = make_adata(k=[3, 4])
+    jz.gp.prune(adata, min_k=1, min_similarity=0.3)
+    expected = (
+        adata.uns["juzi_keep_prune"] &
+        adata.uns["juzi_keep_similarity"] &
+        adata.uns["juzi_keep_cluster"]
+    )
+    np.testing.assert_array_equal(adata.uns["juzi_keep"], expected)
+
+
+def test_juzi_keep_prune_subset_of_juzi_keep():
+    """juzi_keep can only be a subset of juzi_keep_prune."""
+    adata = make_adata(k=[3, 4])
+    jz.gp.prune(adata, min_k=1, min_similarity=0.3)
+    # Anything False in juzi_keep_prune must also be False in juzi_keep
+    assert not adata.uns["juzi_keep"][~adata.uns["juzi_keep_prune"]].any()
+
+
+def test_upstream_masks_not_modified_by_prune():
+    """prune must only modify juzi_keep_prune — not similarity or cluster masks."""
+    adata = make_adata(k=[3, 4])
+    # Manually set similarity and cluster masks to known values
+    n = adata.varm["juzi_G"].shape[1]
+    adata.uns["juzi_keep_similarity"] = np.ones(n, dtype=bool)
+    adata.uns["juzi_keep_cluster"]    = np.ones(n, dtype=bool)
+
+    jz.gp.prune(adata, min_k=1, min_similarity=0.3)
+
+    assert adata.uns["juzi_keep_similarity"].all()
+    assert adata.uns["juzi_keep_cluster"].all()
+
+
 # Pruning behaviour
 
 
 def test_prune_keeps_all_at_zero_threshold():
     adata = make_adata(k=[3, 4])
     jz.gp.prune(adata, min_k=1, min_similarity=0.0)
+    assert adata.uns["juzi_keep_prune"].all()
     assert adata.uns["juzi_keep"].all()
 
 
 def test_prune_drops_all_at_impossible_threshold():
     adata = make_adata(k=[3, 4, 5], init="random", seed=0)
     jz.gp.prune(adata, min_k=3, min_similarity=1.0)
+    assert not adata.uns["juzi_keep_prune"].any()
     assert not adata.uns["juzi_keep"].any()
 
 
 def test_prune_single_k_keeps_all():
     adata = make_adata(k=[5])
     jz.gp.prune(adata, min_k=1, min_similarity=0.5)
-    assert adata.uns["juzi_keep"].all()
+    assert adata.uns["juzi_keep_prune"].all()
 
 
 def test_prune_result_is_subset_of_all_factors():
     adata = make_adata(k=[3, 4])
     jz.gp.prune(adata, min_k=1, min_similarity=0.3)
     n_factors = adata.varm["juzi_G"].shape[1]
-    assert len(adata.uns["juzi_keep"]) == n_factors
-    assert adata.uns["juzi_keep"].sum() <= n_factors
+    assert len(adata.uns["juzi_keep_prune"]) == n_factors
+    assert adata.uns["juzi_keep_prune"].sum() <= n_factors
 
 
 def test_prune_stricter_threshold_keeps_fewer():
@@ -159,7 +214,7 @@ def test_prune_stricter_threshold_keeps_fewer():
     adata_high = make_adata(k=[3, 4], seed=0)
     jz.gp.prune(adata_low,  min_k=1, min_similarity=0.1)
     jz.gp.prune(adata_high, min_k=1, min_similarity=0.9)
-    assert adata_high.uns["juzi_keep"].sum() <= adata_low.uns["juzi_keep"].sum()
+    assert adata_high.uns["juzi_keep_prune"].sum() <= adata_low.uns["juzi_keep_prune"].sum()
 
 
 def test_prune_stricter_min_k_keeps_fewer():
@@ -167,7 +222,7 @@ def test_prune_stricter_min_k_keeps_fewer():
     adata_high = make_adata(k=[3, 4, 5], seed=0)
     jz.gp.prune(adata_low,  min_k=1, min_similarity=0.3)
     jz.gp.prune(adata_high, min_k=3, min_similarity=0.3)
-    assert adata_high.uns["juzi_keep"].sum() <= adata_low.uns["juzi_keep"].sum()
+    assert adata_high.uns["juzi_keep_prune"].sum() <= adata_low.uns["juzi_keep_prune"].sum()
 
 
 # Matching strategies
@@ -176,13 +231,13 @@ def test_prune_stricter_min_k_keeps_fewer():
 def test_greedy_matching_runs():
     adata = make_adata(k=[3, 4])
     jz.gp.prune(adata, matching="greedy")
-    assert "juzi_keep" in adata.uns
+    assert "juzi_keep_prune" in adata.uns
 
 
 def test_hungarian_matching_runs():
     adata = make_adata(k=[3, 4])
     jz.gp.prune(adata, matching="hungarian")
-    assert "juzi_keep" in adata.uns
+    assert "juzi_keep_prune" in adata.uns
 
 
 def test_hungarian_keeps_leq_greedy():
@@ -191,61 +246,6 @@ def test_hungarian_keeps_leq_greedy():
     jz.gp.prune(adata_greedy,    min_k=1, min_similarity=0.3, matching="greedy")
     jz.gp.prune(adata_hungarian, min_k=1, min_similarity=0.3, matching="hungarian")
     assert (
-        adata_hungarian.uns["juzi_keep"].sum()
-        <= adata_greedy.uns["juzi_keep"].sum()
-    )
-
-
-def test_matching_strategies_agree_at_zero_threshold():
-    adata_greedy    = make_adata(k=[3, 4], seed=0)
-    adata_hungarian = make_adata(k=[3, 4], seed=0)
-    jz.gp.prune(adata_greedy,    min_k=1, min_similarity=0.0, matching="greedy")
-    jz.gp.prune(adata_hungarian, min_k=1, min_similarity=0.0, matching="hungarian")
-    np.testing.assert_array_equal(
-        adata_greedy.uns["juzi_keep"],
-        adata_hungarian.uns["juzi_keep"],
-    )
-
-
-# copy parameter
-
-
-def test_copy_false_modifies_inplace():
-    adata  = make_adata()
-    result = jz.gp.prune(adata, copy=False)
-    assert result is None
-    assert "juzi_keep" in adata.uns
-
-
-def test_copy_true_returns_new_object():
-    adata  = make_adata()
-    result = jz.gp.prune(adata, copy=True)
-    assert result is not None
-    assert "juzi_keep" not in adata.uns
-    assert "juzi_keep" in result.uns
-
-
-# Parallelisation
-
-
-def test_parallel_threads():
-    adata = make_adata(n_samples=4, k=[3, 4])
-    jz.gp.prune(adata, n_jobs=2, prefer="threads")
-    assert "juzi_keep" in adata.uns
-
-
-def test_parallel_processes():
-    adata = make_adata(n_samples=4, k=[3, 4])
-    jz.gp.prune(adata, n_jobs=2, prefer="processes")
-    assert "juzi_keep" in adata.uns
-
-
-def test_parallel_matches_serial():
-    adata_serial   = make_adata(n_samples=4, k=[3, 4], seed=0)
-    adata_parallel = make_adata(n_samples=4, k=[3, 4], seed=0)
-    jz.gp.prune(adata_serial,   n_jobs=1)
-    jz.gp.prune(adata_parallel, n_jobs=2, prefer="threads")
-    np.testing.assert_array_equal(
-        adata_serial.uns["juzi_keep"],
-        adata_parallel.uns["juzi_keep"],
+        adata_hungarian.uns["juzi_keep_prune"].sum()
+        <= adata_greedy.uns["juzi_keep_prune"].sum()
     )

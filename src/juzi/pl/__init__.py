@@ -3,6 +3,7 @@
 
 from ._associate import associate
 from ._annotate import annotate
+from ._heatmap import heatmap
 from ._loadings import loadings
 from ._score import score
 from ._similarity import similarity

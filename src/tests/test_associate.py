@@ -48,7 +48,7 @@ def make_adata(
     )
 
     adata = jz.gp.nmf(adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed)
-    jz.gp.similarity(adata, distance="jaccard", top_k=20, min_similarity=0.0)
+    jz.gp.similarity(adata, distance="jaccard", top_k=20)
     jz.gp.cluster(adata, threshold=0.3, min_cluster=1)
     jz.gp.score(adata, n_top_genes=10, seed=seed)
     jz.gp.aggregate(adata, key="donor_id", obs_cols=["age", "study_id", "donor_brca"])
