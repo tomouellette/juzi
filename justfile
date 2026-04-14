@@ -15,7 +15,7 @@
   git commit -m "v${PKG_VERSION}"
   git push origin main
   # Delete if failure
-  git tag -d v0.1.4
-  git push --delete origin v0.1.4
+  # git tag -d v0.1.4
+  # git push --delete origin v0.1.4
   git tag v${PKG_VERSION}
   git push origin v${PKG_VERSION}

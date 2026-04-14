@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 
 from anndata import AnnData
-from typing import List
 from statsmodels.stats.multitest import multipletests
 
 try:
@@ -82,8 +81,7 @@ def associate(
 
     if "juzi_aggregate_scores" not in adata.uns:
         raise KeyError(
-            "'juzi_aggregate_scores' not found in .uns. "
-            "Run juzi.gp.aggregate first."
+            "'juzi_aggregate_scores' not found in .uns. " "Run juzi.gp.aggregate first."
         )
 
     if not isinstance(formula, str) or not formula.strip():
@@ -106,7 +104,7 @@ def associate(
 
     # Validate all referenced columns exist in aggregate scores
     all_vars = _extract_vars(fixed_formula) + group_vars
-    missing  = [v for v in all_vars if v not in df.columns]
+    missing = [v for v in all_vars if v not in df.columns]
     if missing:
         raise KeyError(
             f"The following variables are not in juzi_aggregate_scores: "
@@ -117,7 +115,7 @@ def associate(
     # Combine multiple random effects into an interaction grouping variable
 
     use_lmm = len(group_vars) > 0
-    groups   = None
+    groups = None
 
     if use_lmm:
         if len(group_vars) == 1:
@@ -170,7 +168,7 @@ def associate(
             continue
 
         df[f"{prog}_z"] = (df[prog] - df[prog].mean()) / prog_std
-        full_formula    = f"{prog}_z ~ {fixed_formula}"
+        full_formula = f"{prog}_z ~ {fixed_formula}"
 
         try:
             with warnings.catch_warnings():
@@ -190,19 +188,21 @@ def associate(
 
             # Extract primary covariate result
             beta = fit.params.get(primary_covariate, np.nan)
-            se   = fit.bse.get(primary_covariate, np.nan)
+            se = fit.bse.get(primary_covariate, np.nan)
             pval = fit.pvalues.get(primary_covariate, np.nan)
 
-            results.append({
-                "program":    prog,
-                "covariate":  primary_covariate,
-                "beta":       beta,
-                "se":         se,
-                "pval":       pval,
-                "n_obs":      len(df),
-                "model":      "lmm" if use_lmm else "ols",
-                "groups":     "_x_".join(group_vars) if group_vars else None,
-            })
+            results.append(
+                {
+                    "program": prog,
+                    "covariate": primary_covariate,
+                    "beta": beta,
+                    "se": se,
+                    "pval": pval,
+                    "n_obs": len(df),
+                    "model": "lmm" if use_lmm else "ols",
+                    "groups": "_x_".join(group_vars) if group_vars else None,
+                }
+            )
 
         except Exception as e:
             if not silent:
@@ -214,8 +214,7 @@ def associate(
 
     if len(results) == 0:
         raise ValueError(
-            "No models were successfully fitted. "
-            "Check your formula and data."
+            "No models were successfully fitted. " "Check your formula and data."
         )
 
     # FDR correction
@@ -251,7 +250,7 @@ def _parse_formula(formula: str) -> tuple[str, list[str]]:
         Cleaned fixed-effects formula string and list of group variable names.
     """
     re_term = re.compile(r"\(\s*1\s*\|\s*(\w+)\s*\)")
-    groups  = re_term.findall(formula)
+    groups = re_term.findall(formula)
     cleaned = re_term.sub("", formula)
 
     # Remove consecutive or leading/trailing + operators left by substitution

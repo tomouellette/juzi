@@ -12,36 +12,32 @@ import juzi as jz
 def make_adata(
     n_cells_per_sample: int = 50,
     n_genes: int = 200,
-    n_samples: int = 6,
+    n_samples: int = 12,  # was 6 — more donors for stable LMM
     k: list[int] = [2, 3],
     seed: int = 42,
 ) -> AnnData:
-    """AnnData fit through full pipeline including aggregate, ready for associate."""
     rng = np.random.default_rng(seed)
 
-    profile_a = rng.normal(5.0,  1.0, size=(1, n_genes))
+    profile_a = rng.normal(5.0, 1.0, size=(1, n_genes))
     profile_b = rng.normal(20.0, 1.0, size=(1, n_genes))
 
-    blocks, labels = [], []
-    ages    = []
-    studies = []
-    brcas   = []
+    blocks, labels, ages, studies, brcas = [], [], [], [], []
 
     for i in range(n_samples):
-        profile  = profile_a if i % 2 == 0 else profile_b
-        noise    = rng.normal(0.0, 0.5, size=(n_cells_per_sample, n_genes))
+        profile = profile_a if i % 2 == 0 else profile_b
+        noise = rng.normal(0.0, 0.5, size=(n_cells_per_sample, n_genes))
         X_sample = np.clip(profile + noise, 0, None)
         blocks.append(X_sample)
         labels.extend([f"sample_{i}"] * n_cells_per_sample)
-        ages.extend([30 + i * 8] * n_cells_per_sample)
-        studies.extend([f"study_{i % 3}"] * n_cells_per_sample)
+        ages.extend([30 + i * 5] * n_cells_per_sample)
+        studies.extend([f"study_{i % 3}"] * n_cells_per_sample)  # 3 study groups
         brcas.extend([float(i % 2)] * n_cells_per_sample)
 
     adata = AnnData(
         X=np.vstack(blocks).astype(np.float32),
         obs={
             "donor_id": labels,
-            "age":      np.array(ages,    dtype=float),
+            "age": np.array(ages, dtype=float),
             "study_id": studies,
             "donor_brca": np.array(brcas, dtype=float),
         },
@@ -92,6 +88,7 @@ def test_error_missing_group_in_scores():
 
 def test_parse_formula_single_random_effect():
     from juzi.gp._associate import _parse_formula
+
     fixed, groups = _parse_formula("age + donor_brca + (1|study_id)")
     assert "study_id" not in fixed
     assert "study_id" in groups
@@ -101,6 +98,7 @@ def test_parse_formula_single_random_effect():
 
 def test_parse_formula_multiple_random_effects():
     from juzi.gp._associate import _parse_formula
+
     fixed, groups = _parse_formula("age + (1|study_id) + (1|batch)")
     assert "study_id" in groups
     assert "batch" in groups
@@ -110,6 +108,7 @@ def test_parse_formula_multiple_random_effects():
 
 def test_parse_formula_no_random_effects():
     from juzi.gp._associate import _parse_formula
+
     fixed, groups = _parse_formula("age + donor_brca")
     assert fixed.strip() == "age + donor_brca"
     assert groups == []
@@ -117,6 +116,7 @@ def test_parse_formula_no_random_effects():
 
 def test_parse_formula_no_trailing_operators():
     from juzi.gp._associate import _parse_formula
+
     fixed, _ = _parse_formula("age + (1|study_id)")
     assert not fixed.strip().startswith("+")
     assert not fixed.strip().endswith("+")
@@ -124,6 +124,7 @@ def test_parse_formula_no_trailing_operators():
 
 def test_parse_formula_whitespace_variants():
     from juzi.gp._associate import _parse_formula
+
     fixed1, groups1 = _parse_formula("age + ( 1 | study_id )")
     fixed2, groups2 = _parse_formula("age + (1|study_id)")
     assert groups1 == groups2
@@ -154,10 +155,10 @@ def test_association_columns():
 
 
 def test_association_one_row_per_program():
-    adata      = make_adata()
+    adata = make_adata()
     jz.gp.associate(adata, formula="age + (1|study_id)")
-    df         = adata.uns["juzi_association"]
-    agg_df     = adata.uns["juzi_aggregate_scores"]
+    df = adata.uns["juzi_association"]
+    agg_df = adata.uns["juzi_aggregate_scores"]
     n_programs = len([c for c in agg_df.columns if re.match(r"^P\d+$", c)])
     assert len(df) == n_programs
 
@@ -165,7 +166,7 @@ def test_association_one_row_per_program():
 def test_association_program_col_values():
     adata = make_adata()
     jz.gp.associate(adata, formula="age + (1|study_id)")
-    df    = adata.uns["juzi_association"]
+    df = adata.uns["juzi_association"]
     assert all(re.match(r"^P\d+$", p) for p in df["program"])
 
 
@@ -180,7 +181,7 @@ def test_association_covariate_col_values():
 def test_association_sorted_by_padj():
     adata = make_adata()
     jz.gp.associate(adata, formula="age + (1|study_id)")
-    df    = adata.uns["juzi_association"]
+    df = adata.uns["juzi_association"]
     assert (df["padj"].diff().dropna() >= 0).all()
 
 
@@ -224,9 +225,9 @@ def test_beta_finite():
 
 
 def test_n_obs_correct():
-    adata  = make_adata(n_samples=6)
+    adata = make_adata(n_samples=6)
     jz.gp.associate(adata, formula="age + (1|study_id)")
-    df     = adata.uns["juzi_association"]
+    df = adata.uns["juzi_association"]
     n_donors = adata.uns["juzi_aggregate_scores"].shape[0]
     assert (df["n_obs"] == n_donors).all()
 
@@ -251,7 +252,7 @@ def test_ols_model_used_without_random_effects():
 def test_ols_fallback_warning_single_group():
     """OLS fallback warning fires when only one group level exists."""
     adata = make_adata()
-    agg   = adata.uns["juzi_aggregate_scores"].copy()
+    agg = adata.uns["juzi_aggregate_scores"].copy()
     agg["single_group"] = "only_one"
     adata.uns["juzi_aggregate_scores"] = agg
 
@@ -262,7 +263,7 @@ def test_ols_fallback_warning_single_group():
 def test_multiple_random_effects_combined():
     """Multiple (1|group) terms should run without error."""
     adata = make_adata()
-    agg   = adata.uns["juzi_aggregate_scores"].copy()
+    agg = adata.uns["juzi_aggregate_scores"].copy()
     agg["batch"] = ["b1", "b2"] * (len(agg) // 2) + ["b1"] * (len(agg) % 2)
     adata.uns["juzi_aggregate_scores"] = agg
 
@@ -275,7 +276,7 @@ def test_multiple_random_effects_combined():
 def test_multiple_random_effects_groups_column():
     """groups column should reflect combined random effect names."""
     adata = make_adata()
-    agg   = adata.uns["juzi_aggregate_scores"].copy()
+    agg = adata.uns["juzi_aggregate_scores"].copy()
     agg["batch"] = ["b1", "b2"] * (len(agg) // 2) + ["b1"] * (len(agg) % 2)
     adata.uns["juzi_aggregate_scores"] = agg
 
@@ -308,9 +309,9 @@ def test_reml_false_runs():
 def test_reml_true_false_differ():
     """REML and ML estimates should differ in beta values."""
     adata_reml = make_adata(seed=0)
-    adata_ml   = make_adata(seed=0)
+    adata_ml = make_adata(seed=0)
     jz.gp.associate(adata_reml, formula="age + (1|study_id)", reml=True)
-    jz.gp.associate(adata_ml,   formula="age + (1|study_id)", reml=False)
+    jz.gp.associate(adata_ml, formula="age + (1|study_id)", reml=False)
     assert not np.allclose(
         adata_reml.uns["juzi_association"]["beta"].values,
         adata_ml.uns["juzi_association"]["beta"].values,
@@ -322,14 +323,14 @@ def test_reml_true_false_differ():
 
 
 def test_copy_false_modifies_inplace():
-    adata  = make_adata()
+    adata = make_adata()
     result = jz.gp.associate(adata, formula="age + (1|study_id)", copy=False)
     assert result is None
     assert "juzi_association" in adata.uns
 
 
 def test_copy_true_returns_new_object():
-    adata  = make_adata()
+    adata = make_adata()
     result = jz.gp.associate(adata, formula="age + (1|study_id)", copy=True)
     assert result is not None
     assert "juzi_association" not in adata.uns

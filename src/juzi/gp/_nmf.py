@@ -18,6 +18,7 @@ def nmf(
     key: str,
     layer: str | None = None,
     genes: str | List[str] | np.ndarray | None = "highly_variable",
+    genes_force: List[str] | np.ndarray | None = None,
     gene_names_col: str | None = None,
     min_cells: int = 5,
     k: List[int] | Tuple[int] | np.ndarray = [7, 8, 9, 10],
@@ -60,6 +61,10 @@ def nmf(
     genes : str | List[str] | np.ndarray | None
         Gene selection. If str, must be a boolean column in .var. If list
         or array, must be gene names. If None, all genes are used.
+    genes_force : List[str] | np.ndarray | None
+        List of gene names to force include in the factorisation regardless
+        of the genes argument. Useful for ensuring key marker genes are included
+        in the programs.
     gene_names_col : str | None
         Column in .var containing gene names used for alignment in
         juzi.gp.score. If None, var_names is used. Must be consistent
@@ -145,6 +150,30 @@ def nmf(
         gene_mask = adata.var_names.isin(genes)
     else:
         gene_mask = np.ones(adata.n_vars, dtype=bool)
+
+    # Force include genes
+
+    if genes_force is not None:
+        genes_force = np.asarray(genes_force)
+        missing = genes_force[~np.isin(genes_force, adata.var_names)]
+        if len(missing) > 0:
+            warnings.warn(
+                f"{len(missing)} gene(s) in genes_force not found in "
+                f"adata.var_names and will be ignored: {missing.tolist()}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        force_mask = adata.var_names.isin(genes_force)
+        n_added = (force_mask & ~gene_mask).sum()
+        gene_mask = gene_mask | force_mask
+
+        if n_added > 0 and not silent:
+            warnings.warn(
+                f"{n_added} gene(s) from genes_force added to selection.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     if gene_mask.sum() == 0:
         raise ValueError(
