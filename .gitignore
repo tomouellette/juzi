@@ -10,7 +10,6 @@ __pycache__/
 build.sh
 push.sh
 docs.py
-docs/
 node_modules/
 package-lock.json
 package.json
