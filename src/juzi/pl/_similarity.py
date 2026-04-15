@@ -11,7 +11,7 @@ from typing import Tuple
 def similarity(
     adata: AnnData,
     thresholds: np.ndarray | None = None,
-    figsize: Tuple[float, float] = (4., 3.),
+    figsize: Tuple[float, float] = (4.0, 3.0),
     color: str = "#2b5566",
     fontsize: int = 8,
     ax: plt.Axes | None = None,
@@ -48,8 +48,7 @@ def similarity(
     for field in ["juzi_similarity", "juzi_similarity_idx"]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. "
-                "Run juzi.gp.similarity first."
+                f"'{field}' not found in .uns. " "Run juzi.gp.similarity first."
             )
 
     if thresholds is None:
@@ -57,12 +56,12 @@ def similarity(
 
     # ── Compute retention curve ───────────────────────────────────────────────
 
-    sim      = adata.uns["juzi_similarity"]         # (n_kept × n_kept)
-    sim_idx  = adata.uns["juzi_similarity_idx"]     # global indices
-    n_total  = len(adata.uns["juzi_names"])
+    sim = adata.uns["juzi_similarity"]  # (n_kept × n_kept)
+    sim_idx = adata.uns["juzi_similarity_idx"]  # global indices
+    n_total = len(adata.uns["juzi_names"])
 
     # Map local max similarity back to global factor space
-    max_per_factor          = np.zeros(n_total)
+    max_per_factor = np.zeros(n_total)
     max_per_factor[sim_idx] = sim.max(axis=1)
 
     # Base mask — factors that passed drop_zeros
@@ -72,10 +71,9 @@ def similarity(
         np.zeros(n_total, dtype=bool),
     )
 
-    n_retained = np.array([
-        (base_mask & (max_per_factor >= t)).sum()
-        for t in thresholds
-    ])
+    n_retained = np.array(
+        [(base_mask & (max_per_factor >= t)).sum() for t in thresholds]
+    )
 
     # ── Figure setup ──────────────────────────────────────────────────────────
 
@@ -94,7 +92,7 @@ def similarity(
     )
 
     ax.set_xlabel("Min similarity threshold", fontsize=fontsize)
-    ax.set_ylabel("Factors retained",         fontsize=fontsize)
+    ax.set_ylabel("Factors retained", fontsize=fontsize)
     ax.tick_params(axis="both", length=2, labelsize=fontsize)
 
     for spine in ["top", "right"]:

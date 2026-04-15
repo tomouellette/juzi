@@ -14,7 +14,7 @@ def associate(
     figsize: Tuple[float, float] | None = None,
     palette: Dict[int, str] | None = None,
     fontsize: int = 8,
-    dot_size: float = 20.,
+    dot_size: float = 20.0,
     linewidth: float = 1.0,
     padj_thresh: float = 0.05,
     show_threshold: bool = True,
@@ -74,15 +74,15 @@ def associate(
 
     # Setup
 
-    df       = adata.uns["juzi_association"].copy()
-    labels   = adata.uns["juzi_cluster_labels"]
+    df = adata.uns["juzi_association"].copy()
+    labels = adata.uns["juzi_cluster_labels"]
     unique_C = np.unique(labels)
     n_programs = len(unique_C)
 
     # Palette
 
     if palette is None:
-        colors  = glasbey.create_palette(
+        colors = glasbey.create_palette(
             n_programs,
             chroma_bounds=(5, 40),
             lightness_bounds=(0, 100),
@@ -107,13 +107,13 @@ def associate(
     # Plot
 
     for i, row in df.iterrows():
-        prog      = row["program"]
-        beta      = row["beta"]
-        se        = row["se"]
-        padj      = row["padj"]
+        prog = row["program"]
+        beta = row["beta"]
+        se = row["se"]
+        padj = row["padj"]
         label_int = prog_to_label.get(prog, 0)
-        color     = palette.get(label_int, "#888888")
-        sig       = padj < padj_thresh
+        color = palette.get(label_int, "#888888")
+        sig = padj < padj_thresh
 
         # Error bar
         ax.plot(
@@ -126,7 +126,8 @@ def associate(
 
         # Point — filled if significant, open if not
         ax.scatter(
-            beta, i,
+            beta,
+            i,
             s=dot_size,
             color=color if sig else "white",
             edgecolors=color,
@@ -175,16 +176,20 @@ def associate(
 
     legend_handles = [
         Line2D(
-            [0], [0],
-            marker="o", linestyle="none",
+            [0],
+            [0],
+            marker="o",
+            linestyle="none",
             markerfacecolor="black",
             markeredgecolor="black",
             markersize=4,
             label=f"FDR < {padj_thresh}",
         ),
         Line2D(
-            [0], [0],
-            marker="o", linestyle="none",
+            [0],
+            [0],
+            marker="o",
+            linestyle="none",
             markerfacecolor="white",
             markeredgecolor="black",
             markersize=4,

@@ -74,10 +74,10 @@ def loadings(
 
     # Setup
 
-    G          = adata.uns["juzi_cluster_G"]         # (n_programs × n_genes)
+    G = adata.uns["juzi_cluster_G"]  # (n_programs × n_genes)
     gene_names = np.array(adata.uns["juzi_G_genes"])
-    labels     = adata.uns["juzi_cluster_labels"]
-    unique_C   = np.unique(labels)
+    labels = adata.uns["juzi_cluster_labels"]
+    unique_C = np.unique(labels)
     n_programs = len(unique_C)
 
     if n_top_genes > G.shape[1]:
@@ -88,7 +88,7 @@ def loadings(
     # Palette
 
     if palette is None:
-        colors  = glasbey.create_palette(
+        colors = glasbey.create_palette(
             n_programs,
             chroma_bounds=(5, 40),
             lightness_bounds=(0, 100),
@@ -97,7 +97,7 @@ def loadings(
 
     # Normalise loadings to [0, 1] per program
 
-    G_max  = G.max(axis=1, keepdims=True)
+    G_max = G.max(axis=1, keepdims=True)
     G_max[G_max == 0] = 1
     G_norm = G / G_max
 
@@ -112,7 +112,8 @@ def loadings(
         figsize = (panel_w * n_cols, panel_h * n_rows)
 
     fig, axes = plt.subplots(
-        n_rows, n_cols,
+        n_rows,
+        n_cols,
         figsize=figsize,
     )
 
@@ -122,16 +123,16 @@ def loadings(
     # Plot each program
 
     for i, (c, ax) in enumerate(zip(unique_C, axes_flat)):
-        color     = palette[int(c)]
-        g_row     = G_norm[i]
+        color = palette[int(c)]
+        g_row = G_norm[i]
 
         # Top genes by normalised loading
-        top_idx   = np.argsort(g_row)[-n_top_genes:][::-1]
+        top_idx = np.argsort(g_row)[-n_top_genes:][::-1]
         top_genes = gene_names[top_idx]
-        top_vals  = g_row[top_idx]
+        top_vals = g_row[top_idx]
 
         # Plot in ascending order so highest loading is at top
-        y_pos     = np.arange(n_top_genes)
+        y_pos = np.arange(n_top_genes)
         ax.barh(
             y_pos,
             top_vals[::-1],
@@ -143,7 +144,8 @@ def loadings(
         if show_values:
             for y, v in zip(y_pos, top_vals[::-1]):
                 ax.text(
-                    v + 0.01, y,
+                    v + 0.01,
+                    y,
                     f"{v:.2f}",
                     fontsize=fontsize - 1,
                     va="center",

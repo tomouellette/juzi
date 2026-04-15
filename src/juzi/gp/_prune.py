@@ -73,19 +73,16 @@ def prune(
     # Validate
 
     for field, store in [
-        ("juzi_G",     "varm"),
-        ("juzi_k",     "uns"),
+        ("juzi_G", "varm"),
+        ("juzi_k", "uns"),
         ("juzi_names", "uns"),
     ]:
         if field not in getattr(adata, store):
-            raise KeyError(
-                f"'{field}' not found in .{store}. Run juzi.gp.nmf first."
-            )
+            raise KeyError(f"'{field}' not found in .{store}. Run juzi.gp.nmf first.")
 
     if top_k > adata.n_vars:
         raise ValueError(
-            f"top_k={top_k} exceeds number of genes ({adata.n_vars}). "
-            "Lower top_k."
+            f"top_k={top_k} exceeds number of genes ({adata.n_vars}). " "Lower top_k."
         )
 
     if not 0.0 <= min_similarity <= 1.0:
@@ -103,10 +100,10 @@ def prune(
 
     # Split juzi_G into per-sample factor blocks
 
-    names    = np.array(adata.uns["juzi_names"])
-    G        = adata.varm["juzi_G"].T # (n_total_factors × n_genes)
-    k_list   = adata.uns["juzi_k"]
-    n_comps  = int(np.sum(k_list))
+    names = np.array(adata.uns["juzi_names"])
+    G = adata.varm["juzi_G"].T  # (n_total_factors × n_genes)
+    k_list = adata.uns["juzi_k"]
+    n_comps = int(np.sum(k_list))
     n_unique = len(np.unique(names))
 
     if len(names) != n_unique * n_comps:
@@ -139,13 +136,13 @@ def prune(
 
     # Build global boolean keep mask
 
-    mask               = np.zeros(len(names), dtype=bool)
+    mask = np.zeros(len(names), dtype=bool)
     cumulative_offsets = np.arange(n_unique) * n_comps
 
     for sample_idx, local_keep_idx in enumerate(results):
         if len(local_keep_idx) > 0:
-            global_idx          = cumulative_offsets[sample_idx] + local_keep_idx
-            mask[global_idx]    = True
+            global_idx = cumulative_offsets[sample_idx] + local_keep_idx
+            mask[global_idx] = True
 
     # Update stage mask and recompute juzi_keep
 
@@ -181,7 +178,7 @@ def _match_greedy(
     min_similarity: float,
 ) -> set[int]:
     """Return indices in a that have at least one match in b above threshold."""
-    sim        = _similarity_matrix(top_genes_a, top_genes_b)
+    sim = _similarity_matrix(top_genes_a, top_genes_b)
     best_per_a = sim.max(axis=1)
     return set(np.where(best_per_a >= min_similarity)[0].tolist())
 
@@ -192,8 +189,8 @@ def _match_hungarian(
     min_similarity: float,
 ) -> set[int]:
     """Return indices in a matched to a unique factor in b above threshold."""
-    sim                  = _similarity_matrix(top_genes_a, top_genes_b)
-    row_idx, col_idx     = linear_sum_assignment(-sim)
+    sim = _similarity_matrix(top_genes_a, top_genes_b)
+    row_idx, col_idx = linear_sum_assignment(-sim)
     return {r for r, c in zip(row_idx, col_idx) if sim[r, c] >= min_similarity}
 
 
@@ -227,16 +224,16 @@ def _prune(
     np.ndarray
         Local indices of factors that passed the recurrence filter.
     """
-    split_points  = np.cumsum(k)[:-1]
-    factors_by_k  = np.split(factors, split_points)
+    split_points = np.cumsum(k)[:-1]
+    factors_by_k = np.split(factors, split_points)
 
     top_genes_by_k = [
         [set(np.argsort(factor)[-top_k:]) for factor in resolution]
         for resolution in factors_by_k
     ]
 
-    match_fn           = _match_hungarian if matching == "hungarian" else _match_greedy
-    keep_local_idx     = []
+    match_fn = _match_hungarian if matching == "hungarian" else _match_greedy
+    keep_local_idx = []
     cumulative_offsets = np.concatenate([[0], np.cumsum(k)])
 
     for k_idx, resolution_genes in enumerate(top_genes_by_k):

@@ -72,14 +72,12 @@ def similarity(
     # Validate
 
     for field, store in [
-        ("juzi_G",     "varm"),
-        ("juzi_k",     "uns"),
+        ("juzi_G", "varm"),
+        ("juzi_k", "uns"),
         ("juzi_names", "uns"),
     ]:
         if field not in getattr(adata, store):
-            raise KeyError(
-                f"'{field}' not found in .{store}. Run juzi.gp.nmf first."
-            )
+            raise KeyError(f"'{field}' not found in .{store}. Run juzi.gp.nmf first.")
 
     if distance != "jaccard" and not callable(distance):
         raise ValueError("distance must be 'jaccard' or a callable.")
@@ -95,15 +93,18 @@ def similarity(
 
     # Subset to kept factors
 
-    n_total    = adata.varm["juzi_G"].shape[1]
-    keep       = adata.uns["juzi_keep"] if "juzi_keep" in adata.uns \
-                 else np.ones(n_total, dtype=bool)
-    sim_idx    = np.where(keep)[0] # global indices to local rows/cols
-    G_all      = adata.varm["juzi_G"].T # (n_total × n_genes)
-    G          = G_all[sim_idx] # (n_kept × n_genes)
-    names_all  = np.array(adata.uns["juzi_names"])
-    names      = names_all[sim_idx] # (n_kept,)
-    n          = G.shape[0]
+    n_total = adata.varm["juzi_G"].shape[1]
+    keep = (
+        adata.uns["juzi_keep"]
+        if "juzi_keep" in adata.uns
+        else np.ones(n_total, dtype=bool)
+    )
+    sim_idx = np.where(keep)[0]  # global indices to local rows/cols
+    G_all = adata.varm["juzi_G"].T  # (n_total × n_genes)
+    G = G_all[sim_idx]  # (n_kept × n_genes)
+    names_all = np.array(adata.uns["juzi_names"])
+    names = names_all[sim_idx]  # (n_kept,)
+    n = G.shape[0]
 
     # Build index pairs
 
@@ -139,7 +140,7 @@ def similarity(
         sim[i, j] = s_xy
         sim[j, i] = s_xy
 
-    adata.uns["juzi_similarity"]     = sim
+    adata.uns["juzi_similarity"] = sim
     adata.uns["juzi_similarity_idx"] = sim_idx
 
     # Update juzi_keep_similarity
@@ -150,10 +151,10 @@ def similarity(
     keep_sim = np.zeros(n_total, dtype=bool)
 
     if drop_zeros:
-        local_pass          = ~np.isclose(sim, 0).all(axis=1)
+        local_pass = ~np.isclose(sim, 0).all(axis=1)
         keep_sim[sim_idx[local_pass]] = True
     else:
-        keep_sim[sim_idx]   = True
+        keep_sim[sim_idx] = True
 
     adata.uns["juzi_keep_similarity"] = keep_sim
     _recompute_keep(adata)
@@ -199,8 +200,7 @@ def select_similarity(
     for field in ["juzi_similarity", "juzi_similarity_idx"]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. "
-                "Run juzi.gp.similarity first."
+                f"'{field}' not found in .uns. " "Run juzi.gp.similarity first."
             )
 
     if not 0.0 <= min_similarity <= 1.0:
@@ -208,9 +208,9 @@ def select_similarity(
 
     # Apply threshold
 
-    sim      = adata.uns["juzi_similarity"] # (n_kept × n_kept)
-    sim_idx  = adata.uns["juzi_similarity_idx"] # global indices
-    n_total  = adata.varm["juzi_G"].shape[1]
+    sim = adata.uns["juzi_similarity"]  # (n_kept × n_kept)
+    sim_idx = adata.uns["juzi_similarity_idx"]  # global indices
+    n_total = adata.varm["juzi_G"].shape[1]
 
     # Start from drop_zeros result — factors not in sim_idx are already False
     keep_sim = adata.uns.get(
@@ -219,8 +219,8 @@ def select_similarity(
     ).copy()
 
     # Compute local pass mask from max similarity per row
-    local_max  = sim.max(axis=1) # (n_kept,)
-    local_pass = local_max >= min_similarity # (n_kept,)
+    local_max = sim.max(axis=1)  # (n_kept,)
+    local_pass = local_max >= min_similarity  # (n_kept,)
 
     # Reset sim_idx entries then re-apply both drop_zeros and min_similarity
     # so re-running with a stricter threshold correctly removes factors
@@ -269,8 +269,8 @@ def _similarity(
         return (i, j, 0.0)
 
     if distance == "jaccard":
-        top_x = np.argsort(x)[-int(top_k):]
-        top_y = np.argsort(y)[-int(top_k):]
+        top_x = np.argsort(x)[-int(top_k) :]
+        top_y = np.argsort(y)[-int(top_k) :]
         union = np.union1d(top_x, top_y)
 
         if len(union) == 0:
@@ -281,8 +281,8 @@ def _similarity(
     else:
         if top_k is not None:
             union = np.union1d(
-                np.argsort(x)[-int(top_k):],
-                np.argsort(y)[-int(top_k):],
+                np.argsort(x)[-int(top_k) :],
+                np.argsort(y)[-int(top_k) :],
             )
             x, y = x[union], y[union]
 

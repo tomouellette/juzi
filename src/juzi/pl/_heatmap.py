@@ -12,19 +12,19 @@ from typing import Dict, Tuple, List
 
 def heatmap(
     adata: AnnData,
-    figsize: Tuple[float, float] = (6., 6.),
+    figsize: Tuple[float, float] = (6.0, 6.0),
     ax: plt.Axes | None = None,
     cmap: str | None = None,
     palette: Dict[int, str] | None = None,
     label_buffer: float = 0.075,
     cbar_pad: float = 0.075,
-    cbar_aspect: float = 10.,
+    cbar_aspect: float = 10.0,
     cbar_shrink: float = 0.2,
     cbar_ticks: List[float] = [0, 0.5, 1],
-    cbar_tick_length: float = 0.,
+    cbar_tick_length: float = 0.0,
     cbar_label: str = "Similarity",
     cbar_legend_pos: str = "top",
-    cbar_labelpad: float = 10.,
+    cbar_labelpad: float = 10.0,
     box_color: str = "black",
     box_style: str = "dotted",
     box_linewidth: float = 1.5,
@@ -32,8 +32,8 @@ def heatmap(
     add_cluster_colors: bool = True,
     add_cluster_labels: bool = True,
     fontsize: int = 10,
-    vmin: float = 0.,
-    vmax: float = 1.,
+    vmin: float = 0.0,
+    vmax: float = 1.0,
 ) -> plt.Axes:
     """Plot the factor similarity matrix with consensus program annotations.
 
@@ -101,8 +101,7 @@ def heatmap(
     for field in ["juzi_cluster_similarity", "juzi_cluster_labels"]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. "
-                "Run juzi.gp.cluster before plotting."
+                f"'{field}' not found in .uns. " "Run juzi.gp.cluster before plotting."
             )
 
     S = adata.uns["juzi_cluster_similarity"]
@@ -124,7 +123,7 @@ def heatmap(
                 (1.0, 1.0, 1.0),
                 (0.75, 0.67, 0.75),
                 (0.21, 0.33, 0.33),
-            ]
+            ],
         )
 
     # Cluster colors
@@ -161,52 +160,60 @@ def heatmap(
 
     # Cluster boundaries and annotations
 
-    edges  = np.where(np.diff(C) != 0)[0] + 1
+    edges = np.where(np.diff(C) != 0)[0] + 1
     bounds = list(edges) + [len(C)]
     buffer = edges[0] * label_buffer if len(edges) > 0 else len(C) * label_buffer
 
     start = 0
     for i, end in enumerate(bounds):
-        size       = end - start
+        size = end - start
         cluster_id = int(C[start])
-        color      = palette[cluster_id]
+        color = palette[cluster_id]
 
         # Cluster boundary rectangle
-        ax.add_patch(plt.Rectangle(
-            (start - 0.5, start - 0.5),
-            size, size,
-            fill=False,
-            edgecolor=box_color,
-            linewidth=box_linewidth,
-            linestyle=box_style,
-        ))
+        ax.add_patch(
+            plt.Rectangle(
+                (start - 0.5, start - 0.5),
+                size,
+                size,
+                fill=False,
+                edgecolor=box_color,
+                linewidth=box_linewidth,
+                linestyle=box_style,
+            )
+        )
 
         # Cluster color strip below x-axis
         if add_cluster_colors:
-            ax.add_patch(plt.Rectangle(
-                (start, -2.5),
-                size, -5,
-                facecolor=color,
-                edgecolor="none",
-                linewidth=0.,
-                clip_on=False,
-                transform=ax.transData,
-            ))
+            ax.add_patch(
+                plt.Rectangle(
+                    (start, -2.5),
+                    size,
+                    -5,
+                    facecolor=color,
+                    edgecolor="none",
+                    linewidth=0.0,
+                    clip_on=False,
+                    transform=ax.transData,
+                )
+            )
 
         # Cluster label
         if add_cluster_labels:
-            mid    = (start + end) / 2
-            x_pos  = end + buffer
-            ha     = "left"
+            mid = (start + end) / 2
+            x_pos = end + buffer
+            ha = "left"
             if end > len(C) / 2:
                 x_pos = start - buffer
-                ha    = "right"
+                ha = "right"
 
             ax.text(
-                x_pos, mid,
+                x_pos,
+                mid,
                 f"C{cluster_id}",
                 fontsize=fontsize,
-                ha=ha, va="center",
+                ha=ha,
+                va="center",
                 color="black",
             )
 
@@ -214,7 +221,7 @@ def heatmap(
 
     # Axes styling
 
-    n_factors  = S.shape[0]
+    n_factors = S.shape[0]
     n_programs = len(unique_C)
 
     ax.set_xticks([])

@@ -20,7 +20,7 @@ def annotate(
     palette: Dict[int, str] | None = None,
     cmap: str = "Reds",
     fontsize: int = 8,
-    dot_scale: float = 100.,
+    dot_scale: float = 100.0,
     show_colorbar: bool = True,
     show_legend: bool = True,
     ax: plt.Axes | None = None,
@@ -93,8 +93,8 @@ def annotate(
 
     # Setup
 
-    df       = adata.uns["juzi_annotation"].copy()
-    labels   = adata.uns["juzi_cluster_labels"]
+    df = adata.uns["juzi_annotation"].copy()
+    labels = adata.uns["juzi_cluster_labels"]
     unique_C = np.unique(labels)
     n_programs = len(unique_C)
 
@@ -111,7 +111,7 @@ def annotate(
     # Palette
 
     if palette is None:
-        colors  = glasbey.create_palette(
+        colors = glasbey.create_palette(
             n_programs,
             chroma_bounds=(5, 40),
             lightness_bounds=(0, 100),
@@ -120,11 +120,7 @@ def annotate(
 
     # Select top N gene sets per program
 
-    top_per_program = (
-        df.sort_values("padj")
-        .groupby("program")
-        .head(top_n)
-    )
+    top_per_program = df.sort_values("padj").groupby("program").head(top_n)
 
     # Union of gene sets to display ordered by best Jaccard across programs
     gs_order = (
@@ -139,22 +135,20 @@ def annotate(
     # Pivot to matrix for plotting
 
     jaccard_mat = (
-        top_per_program
-        .pivot(index="gene_set", columns="program", values="jaccard")
+        top_per_program.pivot(index="gene_set", columns="program", values="jaccard")
         .reindex(index=gs_order, columns=prog_order)
         .fillna(0.0)
     )
 
     padj_mat = (
-        top_per_program
-        .pivot(index="gene_set", columns="program", values="padj")
+        top_per_program.pivot(index="gene_set", columns="program", values="padj")
         .reindex(index=gs_order, columns=prog_order)
         .fillna(1.0)
     )
 
     log_padj_mat = -np.log10(padj_mat.clip(lower=1e-300))
 
-    n_gs   = len(gs_order)
+    n_gs = len(gs_order)
     n_prog = len(prog_order)
 
     # Figure setup
@@ -170,20 +164,25 @@ def annotate(
 
     # Dot plot
 
-    vmax = log_padj_mat.values[log_padj_mat.values > 0].max() if (log_padj_mat.values > 0).any() else 1.0
+    vmax = (
+        log_padj_mat.values[log_padj_mat.values > 0].max()
+        if (log_padj_mat.values > 0).any()
+        else 1.0
+    )
     norm = Normalize(vmin=0, vmax=vmax)
     cmap_obj = matplotlib.colormaps.get_cmap(cmap)
 
     for i, gs in enumerate(gs_order):
         for j, prog in enumerate(prog_order):
-            jacc  = jaccard_mat.loc[gs, prog]
+            jacc = jaccard_mat.loc[gs, prog]
             lpadj = log_padj_mat.loc[gs, prog]
 
             if jacc == 0.0:
                 continue
 
             ax.scatter(
-                j, i,
+                j,
+                i,
                 s=jacc * dot_scale,
                 c=[cmap_obj(norm(lpadj))],
                 edgecolors="none",
@@ -202,14 +201,17 @@ def annotate(
     for j, prog in enumerate(prog_order):
         c_int = int(prog.replace("C", ""))
         color = palette.get(c_int, "#888888")
-        ax.add_patch(plt.Rectangle(
-            (j - 0.5, n_gs - 0.5),
-            1.0, 0.6,
-            facecolor=color,
-            edgecolor="none",
-            clip_on=False,
-            transform=ax.transData,
-        ))
+        ax.add_patch(
+            plt.Rectangle(
+                (j - 0.5, n_gs - 0.5),
+                1.0,
+                0.6,
+                facecolor=color,
+                edgecolor="none",
+                clip_on=False,
+                transform=ax.transData,
+            )
+        )
 
     # Axes
 
@@ -233,7 +235,7 @@ def annotate(
 
     if show_colorbar and created_fig:
         cbar_ax = fig.add_axes([1.02, 0.5, 0.02, 0.3])
-        cbar    = fig.colorbar(
+        cbar = fig.colorbar(
             plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm),
             cax=cbar_ax,
             orientation="vertical",
@@ -246,9 +248,10 @@ def annotate(
 
     if show_legend and created_fig:
         legend_jaccards = [0.25, 0.50, 0.75, 1.00]
-        legend_handles  = [
+        legend_handles = [
             plt.scatter(
-                [], [],
+                [],
+                [],
                 s=j * dot_scale,
                 c="grey",
                 edgecolors="none",

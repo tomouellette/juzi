@@ -76,9 +76,9 @@ def annotate(
     # Validate
 
     for field, store in [
-        ("juzi_cluster_G",      "uns"),
+        ("juzi_cluster_G", "uns"),
         ("juzi_cluster_labels", "uns"),
-        ("juzi_G_genes",        "uns"),
+        ("juzi_G_genes", "uns"),
     ]:
         if field not in getattr(adata, store):
             raise KeyError(
@@ -101,7 +101,7 @@ def annotate(
 
     # Setup
 
-    G = adata.uns["juzi_cluster_G"] # (n_programs × n_genes)
+    G = adata.uns["juzi_cluster_G"]  # (n_programs × n_genes)
     gene_names = np.array(adata.uns["juzi_G_genes"])
     labels = adata.uns["juzi_cluster_labels"]
     unique_C = np.unique(labels)
@@ -118,16 +118,16 @@ def annotate(
     # Gene ranking
 
     if use_specificity:
-        total   = G.sum(axis=0, keepdims=True) + 1e-8
-        G_rank  = G / total
+        total = G.sum(axis=0, keepdims=True) + 1e-8
+        G_rank = G / total
     else:
-        G_rank  = G
+        G_rank = G
 
     # Precompute top program genes
 
     program_top_genes = {}
     for i, c in enumerate(unique_C):
-        top_idx              = np.argsort(G_rank[i])[-n_top_genes:]
+        top_idx = np.argsort(G_rank[i])[-n_top_genes:]
         program_top_genes[c] = set(gene_names[top_idx])
 
     # Precompute reference gene sets intersected with background
@@ -151,15 +151,15 @@ def annotate(
 
     for c in unique_C:
         program_genes = program_top_genes[c]
-        n_program     = len(program_genes)
+        n_program = len(program_genes)
 
         for gs_name, gs_genes in ref_sets_filtered.items():
-            overlap       = program_genes & gs_genes
-            n_overlap     = len(overlap)
-            n_geneset     = len(gs_genes)
+            overlap = program_genes & gs_genes
+            n_overlap = len(overlap)
+            n_geneset = len(gs_genes)
 
             # Jaccard
-            union   = program_genes | gs_genes
+            union = program_genes | gs_genes
             jaccard = n_overlap / len(union) if len(union) > 0 else 0.0
 
             # Hypergeometric p-value
@@ -174,17 +174,19 @@ def annotate(
                 n_program,
             )
 
-            rows.append({
-                "program":       f"C{int(c)}",
-                "gene_set":      gs_name,
-                "jaccard":       round(jaccard, 6),
-                "n_overlap":     n_overlap,
-                "n_program":     n_program,
-                "n_geneset":     n_geneset,
-                "n_background":  n_background,
-                "pval":          pval,
-                "overlap_genes": ",".join(sorted(overlap)),
-            })
+            rows.append(
+                {
+                    "program": f"C{int(c)}",
+                    "gene_set": gs_name,
+                    "jaccard": round(jaccard, 6),
+                    "n_overlap": n_overlap,
+                    "n_program": n_program,
+                    "n_geneset": n_geneset,
+                    "n_background": n_background,
+                    "pval": pval,
+                    "overlap_genes": ",".join(sorted(overlap)),
+                }
+            )
 
     # FDR correction
 
