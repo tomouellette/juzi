@@ -67,35 +67,74 @@ class TestPlSimilarity:
         with pytest.raises(KeyError):
             jz.pl.similarity(adata)
 
-    def test_returns_axes(self):
+    def test_error_missing_juzi_similarity_idx(self):
         adata = make_adata()
-        ax = jz.pl.similarity(adata)
-        assert isinstance(ax, plt.Axes)
-        plt.close("all")
+        del adata.uns["juzi_similarity_idx"]
+        with pytest.raises(KeyError):
+            jz.pl.similarity(adata)
 
-    def test_accepts_ax(self):
+    def test_error_missing_juzi_names(self):
+        adata = make_adata()
+        del adata.uns["juzi_names"]
+        with pytest.raises(KeyError):
+            jz.pl.similarity(adata)
+
+    def test_error_partial_axes_injection(self):
         adata = make_adata()
         fig, ax = plt.subplots()
-        result = jz.pl.similarity(adata, ax=ax)
-        assert result is ax
+        with pytest.raises(ValueError):
+            jz.pl.similarity(adata, ax_retention=ax)
+        plt.close("all")
+
+    def test_returns_tuple_of_axes(self):
+        adata = make_adata()
+        ax_ret, ax_hist = jz.pl.similarity(adata)
+        assert isinstance(ax_ret, plt.Axes)
+        assert isinstance(ax_hist, plt.Axes)
+        plt.close("all")
+
+    def test_accepts_axes(self):
+        adata = make_adata()
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        result = jz.pl.similarity(adata, ax_retention=ax1, ax_hist=ax2)
+        assert result[0] is ax1
+        assert result[1] is ax2
         plt.close("all")
 
     def test_custom_thresholds(self):
         adata = make_adata()
-        ax = jz.pl.similarity(adata, thresholds=np.linspace(0, 1, 20))
-        assert isinstance(ax, plt.Axes)
+        ax_ret, ax_hist = jz.pl.similarity(adata, thresholds=np.linspace(0, 1, 20))
+        assert isinstance(ax_ret, plt.Axes)
         plt.close("all")
 
-    def test_custom_color(self):
+    def test_custom_bins(self):
         adata = make_adata()
-        ax = jz.pl.similarity(adata, color="#ff0000")
-        assert isinstance(ax, plt.Axes)
+        ax_ret, ax_hist = jz.pl.similarity(adata, bins=20)
+        assert isinstance(ax_hist, plt.Axes)
         plt.close("all")
 
     def test_custom_figsize(self):
         adata = make_adata()
-        ax = jz.pl.similarity(adata, figsize=(6, 4))
-        assert isinstance(ax, plt.Axes)
+        ax_ret, ax_hist = jz.pl.similarity(adata, figsize=(10, 4))
+        assert isinstance(ax_ret, plt.Axes)
+        plt.close("all")
+
+    def test_custom_color(self):
+        adata = make_adata()
+        ax_ret, ax_hist = jz.pl.similarity(adata, color="#ff0000")
+        assert isinstance(ax_ret, plt.Axes)
+        plt.close("all")
+
+    def test_show_gmm_true(self):
+        adata = make_adata()
+        ax_ret, ax_hist = jz.pl.similarity(adata, show_gmm=True)
+        assert isinstance(ax_hist, plt.Axes)
+        plt.close("all")
+
+    def test_show_gmm_false(self):
+        adata = make_adata()
+        ax_ret, ax_hist = jz.pl.similarity(adata, show_gmm=False)
+        assert isinstance(ax_hist, plt.Axes)
         plt.close("all")
 
 

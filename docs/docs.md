@@ -268,7 +268,7 @@ jz.gp.associate(
     reml=True,
 )
 
-# Multiple random effects: (1|study_id) + (1|batch) → groups = study_id_x_batch
+# Multiple random effects: (1|study_id) + (1|batch) -> groups = study_id_x_batch
 jz.gp.associate(adata, formula="age + (1|study_id) + (1|batch)")
 ```
 

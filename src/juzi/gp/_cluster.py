@@ -284,12 +284,23 @@ def _reorder_clusters(
     return np.array(reorder_idx, dtype=int)
 
 
+# Copyright (c) 2025, Tom Ouellette
+# Licensed under the BSD 3-Clause License
+
+import warnings
+import numpy as np
+import scipy as sp
+
+from anndata import AnnData
+from scipy.cluster.hierarchy import ClusterWarning
+from typing import List
+
+
 def select_threshold(
     adata: AnnData,
     thresholds: np.ndarray | None = None,
     min_cluster: int = 2,
     metric: str = "ratio",
-    reml: bool = True,
     copy: bool = False,
 ) -> float:
     """Select the optimal clustering threshold by maximising cluster contrast.
@@ -318,14 +329,9 @@ def select_threshold(
         are removed before computing the metric at each threshold value.
     metric : str
         Contrast metric to maximise. One of:
-            "ratio"      — inner_sim / outer_sim. Simple and interpretable.
-                           Favours partitions where within-cluster similarity
-                           is high relative to between-cluster similarity.
-            "delta"      — inner_sim - outer_sim. Additive contrast, less
-                           sensitive to scale than ratio.
-            "silhouette" — Mean silhouette score across all factors using
-                           precomputed distance matrix (1 - similarity).
-                           Most statistically rigorous but slowest.
+            "ratio"      — inner_sim / outer_sim.
+            "delta"      — inner_sim - outer_sim.
+            "silhouette" — mean silhouette score across all factors.
     copy : bool
         If True, return a modified copy. If False, modify in place.
 
@@ -333,7 +339,7 @@ def select_threshold(
     -------
     float
         The optimal threshold value that maximises the contrast metric.
-        Also stores the following in .uns:
+        Stores the following in .uns:
             .uns["juzi_threshold_sweep"] : dict with keys:
                 "thresholds"  : array of evaluated thresholds
                 "metric"      : metric values per threshold
@@ -370,8 +376,8 @@ def select_threshold(
         else np.ones(len(full_names), dtype=bool)
     )
 
-    # Local cluster mask within similarity space
-    cluster_mask = global_keep[sim_idx].copy()
+    # Base local mask within similarity space
+    base_cluster_mask = global_keep[sim_idx].copy()
 
     S_full = adata.uns["juzi_similarity"]  # (n_kept × n_kept)
     names = full_names[sim_idx]
@@ -381,11 +387,16 @@ def select_threshold(
     metric_values = np.full(len(thresholds), np.nan)
 
     for t_idx, threshold in enumerate(thresholds):
+        # Fresh local copy of cluster_mask for each threshold
+        # _cluster_at_threshold modifies cluster_mask in place as it removes
+        # under-represented clusters — we need the final state to compute S
+        local_mask = base_cluster_mask.copy()
+
         try:
             clusters = _cluster_at_threshold(
                 S_full=S_full,
                 names=names,
-                cluster_mask=cluster_mask.copy(),
+                cluster_mask=local_mask,
                 threshold=threshold,
                 min_cluster=min_cluster,
             )
@@ -395,9 +406,9 @@ def select_threshold(
         if clusters is None:
             continue
 
-        # Subset S to active factors
-        active = cluster_mask.copy()
-        S = S_full[np.ix_(active, active)]
+        # Recompute S from final local_mask after min_cluster removal
+        # clusters has length local_mask.sum() — must match S dimensions
+        S = S_full[np.ix_(local_mask, local_mask)]
         nc = len(np.unique(clusters))
 
         # Skip degenerate partitions
@@ -464,6 +475,10 @@ def _cluster_at_threshold(
 ) -> np.ndarray | None:
     """Run iterative clustering at a single threshold value.
 
+    Modifies cluster_mask in place — the caller should pass a copy and
+    read the final state of cluster_mask after this function returns to
+    correctly compute S for the surviving factors.
+
     Parameters
     ----------
     S_full : np.ndarray
@@ -471,7 +486,8 @@ def _cluster_at_threshold(
     names : np.ndarray
         Donor name per factor in S_full row order.
     cluster_mask : np.ndarray
-        Local boolean mask of active factors (length n_kept).
+        Local boolean mask of active factors (length n_kept). Modified
+        in place as under-represented clusters are removed.
     threshold : float
         Similarity threshold for merging.
     min_cluster : int
@@ -480,7 +496,8 @@ def _cluster_at_threshold(
     Returns
     -------
     np.ndarray | None
-        Cluster label per active factor or None if no valid partition found.
+        Cluster label per active factor (length cluster_mask.sum() after
+        removal) or None if no valid partition found.
     """
     max_iter = 100
     for _ in range(max_iter):
@@ -526,7 +543,7 @@ def _cluster_at_threshold(
         if passes.all():
             return clusters
 
-        # Remove under-represented clusters
+        # Remove under-represented clusters — modifies cluster_mask in place
         keep_clusters = unique_clusters[passes]
         factor_passes = np.isin(clusters, keep_clusters)
         local_indices = np.where(cluster_mask)[0]

@@ -358,3 +358,60 @@ def test_cluster_rerun_does_not_affect_prune_or_similarity():
     jz.gp.cluster(adata, threshold=0.5, min_cluster=2)
     np.testing.assert_array_equal(adata.uns["juzi_keep_prune"], prune_mask)
     np.testing.assert_array_equal(adata.uns["juzi_keep_similarity"], similarity_mask)
+
+
+# Additional checks for edge cases
+
+
+def test_select_threshold_with_min_cluster_and_intra_sample_false():
+    """select_threshold must not raise IndexError when min_cluster > 1
+    and intra_sample=False — the S matrix and clusters array must be
+    aligned after min_cluster removal."""
+    rng = np.random.default_rng(42)
+
+    profile_a = rng.normal(5.0, 1.0, size=(1, 100))
+    profile_b = rng.normal(90.0, 1.0, size=(1, 100))
+
+    blocks, labels = [], []
+    for i in range(8):
+        profile = profile_a if i % 2 == 0 else profile_b
+        noise = rng.normal(0.0, 0.5, size=(30, 100))
+        X_sample = np.clip(profile + noise, 0, None)
+        blocks.append(X_sample)
+        labels.extend([f"sample_{i}"] * 30)
+
+    adata = AnnData(
+        X=np.vstack(blocks).astype(np.float32),
+        obs={"donor_id": labels},
+        var={"gene_name": np.arange(100).astype(str)},
+    )
+
+    adata = jz.gp.nmf(
+        adata, key="donor_id", k=[2, 3], min_cells=10, genes=None, seed=42
+    )
+    jz.gp.similarity(adata, distance="jaccard", top_k=20, intra_sample=False)
+
+    # This should not raise IndexError
+    optimal = jz.gp.select_threshold(adata, min_cluster=3, metric="ratio")
+
+    assert isinstance(optimal, float)
+    assert 0.0 <= optimal <= 1.0
+    assert "juzi_threshold_sweep" in adata.uns
+
+
+def test_select_threshold_metric_values_finite_where_valid():
+    """All non-nan metric values must be finite."""
+    adata = make_adata(n_samples=6, seed=0)
+    jz.gp.select_threshold(adata, min_cluster=1, metric="ratio")
+    sweep = adata.uns["juzi_threshold_sweep"]
+    metric = sweep["metric"]
+    valid = metric[~np.isnan(metric)]
+    assert np.isfinite(valid).all()
+
+
+def test_select_threshold_optimal_is_valid_threshold():
+    """Optimal must be one of the evaluated threshold values."""
+    adata = make_adata(n_samples=6, seed=0)
+    thresholds = np.linspace(0.0, 1.0, 20)
+    optimal = jz.gp.select_threshold(adata, min_cluster=1, thresholds=thresholds)
+    assert any(np.isclose(optimal, t) for t in thresholds)
