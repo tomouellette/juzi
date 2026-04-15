@@ -4,16 +4,15 @@
 import glasbey
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 
 from anndata import AnnData
-from matplotlib.colors import LinearSegmentedColormap
 from typing import Dict, List, Tuple
 
 
 def loadings(
     adata: AnnData,
     n_top_genes: int = 10,
+    use_specificity: bool = True,
     figsize: Tuple[float, float] | None = None,
     palette: Dict[int, str] | None = None,
     fontsize: int = 8,
@@ -24,9 +23,11 @@ def loadings(
     """Plot top gene loadings per consensus program as horizontal bar charts.
 
     For each consensus program identified by juzi.gp.cluster, displays the
-    top n_top_genes genes by normalised loading magnitude as a horizontal
-    bar chart. Programs are arranged as a grid of small multiples, one
-    panel per program.
+    top n_top_genes genes as a horizontal bar chart. Genes are selected by
+    the same ranking used in juzi.ut.program_genes and juzi.gp.score —
+    either specificity (loading / total loading across programs) or raw
+    loading magnitude. Bar length shows normalised loading magnitude so
+    bars are always in [0, 1].
 
     Parameters
     ----------
@@ -35,19 +36,23 @@ def loadings(
         produced by juzi.gp.cluster.
     n_top_genes : int
         Number of top genes to display per program.
+    use_specificity : bool
+        If True, rank genes by specificity score (loading in this program
+        divided by total loading across all programs). Matches the ranking
+        used in juzi.ut.program_genes and juzi.gp.score. If False, rank
+        by raw loading magnitude.
     figsize : Tuple[float, float] | None
         Figure size in inches. If None, inferred from number of programs
         and n_top_genes.
     palette : Dict[int, str] | None
         Dictionary mapping cluster label integers to colours. If None,
-        generated automatically via glasbey to match juzi.pl.similarity.
+        generated automatically via glasbey.
     fontsize : int
         Font size for all text elements.
     bar_height : float
         Height of each bar as a fraction of available row space.
     ncols : int
-        Number of columns in the figure grid. Number of rows is inferred from
-        number of programs.
+        Number of columns in the figure grid.
     show_values : bool
         If True, annotate each bar with its normalised loading value.
 
@@ -95,11 +100,19 @@ def loadings(
         )
         palette = {int(c): colors[i] for i, c in enumerate(unique_C)}
 
-    # Normalise loadings to [0, 1] per program
+    # Gene ranking
+
+    if use_specificity:
+        total = G.sum(axis=0, keepdims=True) + 1e-8
+        G_rank = G / total
+    else:
+        G_rank = G
+
+    # Display normalisation
 
     G_max = G.max(axis=1, keepdims=True)
     G_max[G_max == 0] = 1
-    G_norm = G / G_max
+    G_norm = G / G_max  # (n_programs × n_genes)
 
     # Figure layout
 
@@ -111,27 +124,22 @@ def loadings(
         panel_h = 0.25 * n_top_genes + 0.5
         figsize = (panel_w * n_cols, panel_h * n_rows)
 
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=figsize,
-    )
-
-    # Flatten and handle single panel case
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     axes_flat = np.array(axes).flatten() if n_programs > 1 else [axes]
 
     # Plot each program
 
     for i, (c, ax) in enumerate(zip(unique_C, axes_flat)):
         color = palette[int(c)]
-        g_row = G_norm[i]
 
-        # Top genes by normalised loading
-        top_idx = np.argsort(g_row)[-n_top_genes:][::-1]
+        # Select top genes by rank (specificity or raw loading)
+        top_idx = np.argsort(G_rank[i])[-n_top_genes:][::-1]
         top_genes = gene_names[top_idx]
-        top_vals = g_row[top_idx]
 
-        # Plot in ascending order so highest loading is at top
+        # Display bar length as normalised loading magnitude
+        top_vals = G_norm[i][top_idx]
+
+        # Plot in ascending order so highest-ranked gene is at top
         y_pos = np.arange(n_top_genes)
         ax.barh(
             y_pos,
