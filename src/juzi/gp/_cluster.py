@@ -284,18 +284,6 @@ def _reorder_clusters(
     return np.array(reorder_idx, dtype=int)
 
 
-# Copyright (c) 2025, Tom Ouellette
-# Licensed under the BSD 3-Clause License
-
-import warnings
-import numpy as np
-import scipy as sp
-
-from anndata import AnnData
-from scipy.cluster.hierarchy import ClusterWarning
-from typing import List
-
-
 def select_threshold(
     adata: AnnData,
     thresholds: np.ndarray | None = None,
@@ -564,9 +552,9 @@ def merge_clusters(
 
     Merges one or more sets of cluster labels into single programs.
     The merged program centroid is recomputed as the mean loading across
-    all member factors. Cluster labels are remapped to contiguous 0-based
-    integers after merging. juzi_keep masks are not modified since no
-    factors are removed.
+    all member factors. The similarity matrix and cluster labels are
+    reordered so merged factors are contiguous and clusters are sorted
+    by size. juzi_keep masks are not modified since no factors are removed.
 
     Parameters
     ----------
@@ -579,8 +567,7 @@ def merge_clusters(
               [0, 2] merges C0 and C2.
             - A list of lists performs multiple independent merges:
               [[0, 2], [1, 3]] merges C0+C2 and C1+C3 simultaneously.
-        In both cases the merged cluster takes the lowest label among
-        the input clusters and labels are remapped contiguously after.
+        In both cases merged clusters are reordered by size after merging.
     copy : bool
         If True, return a modified copy. If False, modify in place.
 
@@ -588,10 +575,12 @@ def merge_clusters(
     -------
     AnnData | None
         AnnData with the following fields updated:
-            .uns["juzi_cluster_labels"]  : updated cluster labels per factor
-            .uns["juzi_cluster_G"]       : updated centroid loadings
-            .uns["juzi_cluster_samples"] : updated contributing donors per cluster
-            .uns["juzi_cluster_stats"]   : updated inner/outer/silhouette stats
+            .uns["juzi_cluster_similarity"] : reordered similarity matrix
+            .uns["juzi_cluster_labels"]     : updated and reordered labels
+            .uns["juzi_cluster_names"]      : reordered donor names per factor
+            .uns["juzi_cluster_G"]          : updated centroid loadings
+            .uns["juzi_cluster_samples"]    : updated contributing donors
+            .uns["juzi_cluster_stats"]      : updated inner/outer/silhouette
     """
     adata = adata.copy() if copy else adata
 
@@ -603,13 +592,15 @@ def merge_clusters(
         "juzi_cluster_names",
         "juzi_cluster_samples",
         "juzi_cluster_similarity",
+        "juzi_keep_cluster",
     ]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. " "Run juzi.gp.cluster before merging."
+                f"'{field}' not found in .uns. "
+                "Run juzi.gp.cluster before merging."
             )
 
-    labels = adata.uns["juzi_cluster_labels"].copy()
+    labels   = adata.uns["juzi_cluster_labels"].copy()
     unique_C = set(np.unique(labels).tolist())
 
     # Normalise input to list of lists
@@ -640,22 +631,37 @@ def merge_clusters(
             all_mentioned.append(int(c))
 
     if len(all_mentioned) != len(set(all_mentioned)):
-        raise ValueError("Each cluster label may only appear in one merge group.")
+        raise ValueError(
+            "Each cluster label may only appear in one merge group."
+        )
 
     # Apply merges
-    # For each merge group, assign all labels to the lowest label in the group
+    # Assign all labels in each group to the lowest label in that group
 
     for group in merge_groups:
-        group = [int(c) for c in group]
+        group  = [int(c) for c in group]
         target = min(group)
         for c in group:
             if c != target:
                 labels[labels == c] = target
 
-    # Remap to contiguous 0-based integers
+    # Reorder so merged clusters are contiguous and sorted by size
+
+    S        = adata.uns["juzi_cluster_similarity"].copy()
+    names    = np.array(adata.uns["juzi_cluster_names"])
+    G_masked = adata.varm["juzi_G"].T[adata.uns["juzi_keep_cluster"]]
+
+    reorder_idx = _reorder_clusters(S, labels)
+    S           = S[np.ix_(reorder_idx, reorder_idx)]
+    names       = names[reorder_idx]
+    labels      = labels[reorder_idx]
+    G_masked    = G_masked[reorder_idx]
+
+    # Remap labels to contiguous 0-based integers
+    # Use first-appearance order so label 0 = largest cluster
 
     _, first_occurrence = np.unique(labels, return_index=True)
-    ordered_old = labels[np.sort(first_occurrence)]
+    ordered_old         = labels[np.sort(first_occurrence)]
 
     remapped = np.empty_like(labels)
     for new_label, old_label in enumerate(ordered_old):
@@ -664,56 +670,54 @@ def merge_clusters(
 
     # Recompute centroid gene loadings
 
-    G_masked = adata.varm["juzi_G"].T[adata.uns["juzi_keep_cluster"]]
-    names = np.array(adata.uns["juzi_cluster_names"])
     unique_clusters = np.unique(labels)
-
-    # G_masked and labels are both in the reordered clustered space
-    cluster_G = np.array([G_masked[labels == c].mean(axis=0) for c in unique_clusters])
+    cluster_G       = np.array([
+        G_masked[labels == c].mean(axis=0)
+        for c in unique_clusters
+    ])
 
     # Recompute per-cluster sample lists
 
     cluster_samples = {
-        int(c): np.unique(names[labels == c]).tolist() for c in unique_clusters
+        int(c): np.unique(names[labels == c]).tolist()
+        for c in unique_clusters
     }
 
     # Recompute cluster quality statistics
 
-    S = adata.uns["juzi_cluster_similarity"]
     inner_mask = labels[:, None] == labels[None, :]
     outer_mask = ~inner_mask
 
-    inner_sim = float(S[inner_mask].mean()) if inner_mask.any() else 0.0
-    outer_sim = float(S[outer_mask].mean()) if outer_mask.any() else 0.0
+    inner_sim  = float(S[inner_mask].mean()) if inner_mask.any() else 0.0
+    outer_sim  = float(S[outer_mask].mean()) if outer_mask.any() else 0.0
 
-    sil_score = None
-    nc = len(unique_clusters)
+    sil_score   = None
+    nc          = len(unique_clusters)
     dist_matrix = 1.0 - S
     np.fill_diagonal(dist_matrix, 0.0)
 
     if nc > 1 and nc < S.shape[0] - 1:
         from sklearn.metrics import silhouette_score
-
         try:
-            sil_score = float(
-                silhouette_score(
-                    dist_matrix,
-                    labels,
-                    metric="precomputed",
-                )
-            )
+            sil_score = float(silhouette_score(
+                dist_matrix,
+                labels,
+                metric="precomputed",
+            ))
         except Exception:
             pass
 
     # Store results
 
-    adata.uns["juzi_cluster_labels"] = labels
-    adata.uns["juzi_cluster_G"] = cluster_G
-    adata.uns["juzi_cluster_samples"] = cluster_samples
-    adata.uns["juzi_cluster_stats"] = {
+    adata.uns["juzi_cluster_similarity"] = S
+    adata.uns["juzi_cluster_labels"]     = labels
+    adata.uns["juzi_cluster_names"]      = names.tolist()
+    adata.uns["juzi_cluster_G"]          = cluster_G
+    adata.uns["juzi_cluster_samples"]    = cluster_samples
+    adata.uns["juzi_cluster_stats"]      = {
         "silhouette_score": sil_score,
-        "inner_similarity": inner_sim,
-        "outer_similarity": outer_sim,
+        "inner_similarity":  inner_sim,
+        "outer_similarity":  outer_sim,
     }
 
     return adata if copy else None
