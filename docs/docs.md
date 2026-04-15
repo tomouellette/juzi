@@ -1,8 +1,8 @@
 # docs
 
-## Overview
+---
 
-The juzi pipeline consists of eight analytical steps, five plotting functions, and a set of utility functions:
+## Overview
 
 #### Analysis (`juzi.gp`)
 
@@ -11,7 +11,9 @@ juzi.gp.nmf               — per-donor NMF at multiple resolutions
 juzi.gp.prune             — remove non-recurrent intra-donor factors
 juzi.gp.similarity        — compute inter-donor factor similarity
 juzi.gp.select_similarity — filter factors by minimum similarity threshold
+juzi.gp.select_threshold  — select optimal clustering threshold
 juzi.gp.cluster           — cluster factors into consensus programs
+juzi.gp.merge_clusters    — manually merge programs post-hoc
 juzi.gp.score             — score cells on consensus programs
 juzi.gp.aggregate         — pseudobulk donor-level program scores
 juzi.gp.associate         — LMM association testing
@@ -23,6 +25,7 @@ juzi.gp.annotate          — overlap with reference gene sets
 ```
 juzi.pl.similarity   — min_similarity vs factors retained curve
 juzi.pl.heatmap      — factor similarity matrix heatmap with cluster annotations
+juzi.pl.threshold    — clustering threshold vs contrast metric curve
 juzi.pl.loadings     — top gene loadings per program
 juzi.pl.associate    — coefficient plot of association results
 juzi.pl.scores       — embedding coloured by program scores
@@ -43,7 +46,7 @@ juzi.ut.program_donors  — per-donor factor contribution per program
 juzi.mg.CellCycle       — cell cycle markers (Tirosh et al. 2016)
 juzi.mg.CancerPathways  — canonical cancer pathways (Sanchez-Vega et al. 2018)
 juzi.mg.CancerBreast    — breast cancer subtype markers (Parker et al. 2009)
-juzi.mg.MsigDB3CA       — 3CA meta-programs (Gavish et al. 2023)
+juzi.mg.Hallmark3CA       — 3CA meta-programs (Gavish et al. 2023)
 juzi.mg.read_msigdb     — load any MSigDB .txt file
 ```
 
@@ -63,11 +66,11 @@ adata = sc.read_h5ad("mammary_gland.h5ad")
 print(adata.obs["donor_id"].value_counts())
 ```
 
----
+### Step 1 — NMF
 
-## Step 1 — NMF
+Fit NMF independently on each donor at multiple resolutions. juzi normalises and log-transforms counts internally. Always returns a new AnnData — the input is never modified.
 
-Fit NMF independently on each donor at multiple resolutions. juzi normalises and log-transforms counts internally.
+All three stage keep masks are initialised to all True after `nmf`. `juzi_keep` is set to their intersection.
 
 ```python
 adata = jz.gp.nmf(
@@ -76,17 +79,11 @@ adata = jz.gp.nmf(
     k=[7, 8, 9, 10],          # factorisation ranks — use multiple for stability
     min_cells=10,             # minimum cells per donor to include
     genes="highly_variable",  # boolean .var column, list of genes, or None
-    genes_force=["PTHLH", "AREG"],  # always include regardless of genes filter
+    genes_force=age_degs,     # always include regardless of genes filter
     target_sum=1e4,           # library size normalisation target
     seed=42,
 )
 ```
-
-> **Note:** `nmf` always returns a new AnnData object subset to the selected genes and donors that passed `min_cells` filtering. The input object is never modified in place.
-
-> **Note:** All three stage keep masks (`juzi_keep_prune`, `juzi_keep_similarity`, `juzi_keep_cluster`) are initialised to all True after `nmf`. `juzi_keep` is the intersection of all three and is recomputed by each downstream function.
-
-Key outputs stored in the returned AnnData:
 
 | Field | Location | Description |
 |---|---|---|
@@ -94,16 +91,14 @@ Key outputs stored in the returned AnnData:
 | `juzi_k` | `.uns` | List of k values used |
 | `juzi_names` | `.uns` | Donor identity per factor column |
 | `juzi_G_genes` | `.uns` | Gene names corresponding to `juzi_G` rows |
-| `juzi_keep_prune` | `.uns` | Boolean mask — all True, updated by `prune` |
-| `juzi_keep_similarity` | `.uns` | Boolean mask — all True, updated by `similarity` |
-| `juzi_keep_cluster` | `.uns` | Boolean mask — all True, updated by `cluster` |
+| `juzi_keep_prune` | `.uns` | Boolean mask — all True |
+| `juzi_keep_similarity` | `.uns` | Boolean mask — all True |
+| `juzi_keep_cluster` | `.uns` | Boolean mask — all True |
 | `juzi_keep` | `.uns` | Intersection of all three stage masks |
 
----
+### Step 2 — Prune
 
-## Step 2 — Prune
-
-Remove non-recurrent factors within each donor. A factor is considered recurrent if it shares sufficient top-gene overlap with at least one factor from each of `min_k` other resolutions. Updates `juzi_keep_prune` and recomputes `juzi_keep`.
+Remove non-recurrent factors within each donor. A factor is recurrent if it shares sufficient top-gene overlap with at least `min_k` other resolutions. Updates `juzi_keep_prune` and recomputes `juzi_keep`.
 
 ```python
 jz.gp.prune(
@@ -115,18 +110,14 @@ jz.gp.prune(
 )
 ```
 
-Outputs:
-
 | Field | Location | Description |
 |---|---|---|
 | `juzi_keep_prune` | `.uns` | Boolean mask of recurrent factors |
-| `juzi_keep` | `.uns` | Recomputed intersection of all three stage masks |
+| `juzi_keep` | `.uns` | Recomputed intersection |
 
----
+### Step 3 — Similarity
 
-## Step 3 — Similarity
-
-Compute pairwise Jaccard similarity between all factors across all donors. Factors whose entire similarity row is zero are flagged via `drop_zeros`. Updates `juzi_keep_similarity` and recomputes `juzi_keep`.
+Compute pairwise Jaccard similarity between kept factors across all donors. Only factors where `juzi_keep` is True enter the computation — the resulting matrix is `(n_kept × n_kept)`. Updates `juzi_keep_similarity` and recomputes `juzi_keep`.
 
 ```python
 jz.gp.similarity(
@@ -138,56 +129,67 @@ jz.gp.similarity(
 )
 ```
 
-Outputs:
-
 | Field | Location | Description |
 |---|---|---|
-| `juzi_similarity` | `.uns` | Factor × factor similarity matrix |
-| `juzi_keep_similarity` | `.uns` | Boolean mask updated by drop_zeros |
-| `juzi_keep` | `.uns` | Recomputed intersection of all three stage masks |
+| `juzi_similarity` | `.uns` | `(n_kept × n_kept)` similarity matrix |
+| `juzi_similarity_idx` | `.uns` | Global factor indices of similarity matrix rows/cols |
+| `juzi_keep_similarity` | `.uns` | Boolean mask length `n_total`, updated by drop_zeros |
+| `juzi_keep` | `.uns` | Recomputed intersection |
 
----
+### Step 3b — Select similarity threshold
 
-## Step 3b — Select similarity threshold
-
-Inspect the retention curve and apply a `min_similarity` threshold. Can be re-run with different thresholds without re-running `similarity`. The `drop_zeros` mask from `similarity` is preserved across re-runs.
+Inspect the retention curve and apply a `min_similarity` threshold. Can be re-run with different thresholds without re-running `similarity`. The `drop_zeros` mask is preserved across re-runs.
 
 ```python
-# Inspect the curve first
+# Inspect the retention curve
 ax = jz.pl.similarity(adata)
 
 # Apply a threshold
 jz.gp.select_similarity(adata, min_similarity=0.2)
 ```
 
-Outputs:
-
 | Field | Location | Description |
 |---|---|---|
 | `juzi_keep_similarity` | `.uns` | Updated boolean mask |
-| `juzi_keep` | `.uns` | Recomputed intersection of all three stage masks |
+| `juzi_keep` | `.uns` | Recomputed intersection |
 
----
+### Step 4 — Select clustering threshold
 
-## Step 4 — Cluster
+Sweep across threshold values, fit clustering at each, and find the threshold that maximises the contrast between inner-cluster and outer-cluster similarity. Stores sweep results for plotting and returns the optimal threshold.
 
-Cluster the factor similarity matrix into consensus programs using iterative average-linkage merging. Factors removed by `min_cluster` are tracked in `juzi_keep_cluster`. Can be re-run with different parameters without affecting upstream masks — only `juzi_keep_cluster` is reset each run.
+```python
+# Sweep thresholds and find optimal
+optimal = jz.gp.select_threshold(
+    adata,
+    min_cluster=3,       # must match the value used in cluster()
+    metric="ratio",      # "ratio", "delta", or "silhouette"
+)
+
+# Inspect the sweep curve
+ax = jz.pl.threshold(adata)
+```
+
+| Field | Location | Description |
+|---|---|---|
+| `juzi_threshold_sweep` | `.uns` | Dict with thresholds, metric values, and optimal threshold |
+
+### Step 5 — Cluster
+
+Cluster the factor similarity matrix into consensus programs using iterative average-linkage merging. Factors removed by `min_cluster` are tracked in `juzi_keep_cluster`. Re-running only resets `juzi_keep_cluster` — upstream masks are never modified.
 
 ```python
 jz.gp.cluster(
     adata,
-    threshold=0.1,   # merge until max inter-cluster similarity < threshold
-    min_cluster=2,   # minimum unique donors per cluster
-    reorder=True,    # sort clusters by size, largest first
+    threshold=optimal,   # from select_threshold or chosen manually
+    min_cluster=3,       # minimum unique donors per cluster
+    reorder=True,        # sort clusters by size, largest first
 )
 ```
 
-Outputs:
-
 | Field | Location | Description |
 |---|---|---|
-| `juzi_keep_cluster` | `.uns` | Boolean mask of factors retained after min_cluster filtering |
-| `juzi_keep` | `.uns` | Recomputed intersection of all three stage masks |
+| `juzi_keep_cluster` | `.uns` | Boolean mask length `n_total` |
+| `juzi_keep` | `.uns` | Recomputed intersection |
 | `juzi_cluster_similarity` | `.uns` | Reordered factor similarity matrix |
 | `juzi_cluster_labels` | `.uns` | Cluster label per retained factor |
 | `juzi_cluster_names` | `.uns` | Donor name per retained factor, aligned to labels |
@@ -195,9 +197,30 @@ Outputs:
 | `juzi_cluster_samples` | `.uns` | Unique contributing donors per program |
 | `juzi_cluster_stats` | `.uns` | Silhouette, inner/outer similarity |
 
----
+### Step 5b — Merge clusters (optional)
 
-## Step 5 — Score
+After inspecting the heatmap and loadings, merge programs that are biologically related but were split by clustering. Faster and more targeted than re-running with a lower threshold.
+
+```python
+# Inspect results first
+ax  = jz.pl.heatmap(adata)
+fig = jz.pl.loadings(adata, n_top_genes=15)
+
+# Merge C0 and C2 into one program
+jz.gp.merge_clusters(adata, clusters=[0, 2])
+
+# Multiple independent merges in one call
+jz.gp.merge_clusters(adata, clusters=[[0, 2], [1, 3]])
+```
+
+| Field | Location | Description |
+|---|---|---|
+| `juzi_cluster_labels` | `.uns` | Updated cluster labels |
+| `juzi_cluster_G` | `.uns` | Updated centroid loadings |
+| `juzi_cluster_samples` | `.uns` | Updated contributing donors |
+| `juzi_cluster_stats` | `.uns` | Updated inner/outer/silhouette stats |
+
+### Step 6 — Score
 
 Score each cell on each consensus program using the Tirosh et al. 2016 control-subtracted mean expression approach.
 
@@ -211,132 +234,95 @@ jz.gp.score(
 )
 ```
 
-Outputs:
-
 | Field | Location | Description |
 |---|---|---|
 | `juzi_program_scores` | `.obsm` | Cell × program score matrix |
 | `juzi_program_genes` | `.uns` | Top genes used per program |
 
----
+### Step 7 — Aggregate
 
-## Step 6 — Aggregate
-
-Aggregate per-cell program scores to per-donor pseudobulk scores. Donor-level covariates are propagated alongside program scores for direct use in `associate`.
+Aggregate per-cell program scores to per-donor pseudobulk scores. Donor-level covariates are propagated for direct use in `associate`.
 
 ```python
 jz.gp.aggregate(
     adata,
     key="donor_id",
-    obs_cols=["age", "study_id", "donor_brca"],  # donor-level covariates
-    agg="mean",   # "mean" or "median"
-    min_cells=10, # minimum cells per donor to include
+    obs_cols=["age", "study_id", "donor_brca"],
+    agg="mean",
+    min_cells=10,
 )
 ```
-
-Outputs:
 
 | Field | Location | Description |
 |---|---|---|
 | `juzi_aggregate_scores` | `.uns` | DataFrame (n_donors × n_programs + covariates) |
 
----
+### Step 8 — Associate
 
-## Step 7 — Associate
-
-Test whether consensus program activity associates with a covariate of interest using a linear mixed model. Supports R-style formula notation with random effects. Multiple random effects are combined into a single interaction grouping variable.
+Test whether consensus program activity associates with a covariate using a linear mixed model. Supports R-style formula notation with random effects. Multiple random effects are combined into a single interaction grouping variable.
 
 ```python
 jz.gp.associate(
     adata,
     formula="age + donor_brca + (1|study_id)",
-    reml=True,  # use restricted maximum likelihood
+    reml=True,
 )
 
 # Multiple random effects: (1|study_id) + (1|batch) → groups = study_id_x_batch
-jz.gp.associate(
-    adata,
-    formula="age + (1|study_id) + (1|batch)",
-)
+jz.gp.associate(adata, formula="age + (1|study_id) + (1|batch)")
 ```
-
-Outputs:
 
 | Field | Location | Description |
 |---|---|---|
 | `juzi_association` | `.uns` | DataFrame with beta, se, pval, padj per program |
 
----
+### Step 9 — Annotate
 
-## Step 8 — Annotate
-
-Score consensus programs against reference gene sets to aid biological interpretation. Computes Jaccard similarity and hypergeometric p-values for each program × gene set pair.
+Score consensus programs against reference gene sets. Computes Jaccard similarity and hypergeometric p-values for each program × gene set pair.
 
 ```python
-# Using a built-in juzi.mg gene set
+# Built-in gene sets
 gene_sets = jz.mg.CellCycle().as_dict()
 
-# Or from MSigDB
+# From MSigDB
 gene_sets = jz.mg.read_msigdb("msigdb_human.txt", collections=["C4:3CA"])
 
-# Or a custom dict
+# Custom dict
 gene_sets = {"MY_PROGRAM": ["GENE1", "GENE2", "GENE3"]}
 
-jz.gp.annotate(
-    adata,
-    gene_sets=gene_sets,
-    n_top_genes=50,
-    use_specificity=True,
-)
+jz.gp.annotate(adata, gene_sets=gene_sets, n_top_genes=50)
 ```
-
-Outputs:
 
 | Field | Location | Description |
 |---|---|---|
-| `juzi_annotation` | `.uns` | Tidy DataFrame with Jaccard, hypergeometric pval, padj, overlap_genes |
+| `juzi_annotation` | `.uns` | Tidy DataFrame with Jaccard, pval, padj, overlap_genes |
 
 ---
 
 ## Plotting
 
-### Similarity threshold selection curve
-
-Inspect how many factors are retained at each `min_similarity` threshold before calling `jz.gp.select_similarity`.
-
 ```python
+# Similarity threshold selection — run before select_similarity
 ax = jz.pl.similarity(adata)
-```
 
-### Factor similarity matrix heatmap
-
-```python
+# Factor similarity matrix with cluster annotations — run after cluster
 ax = jz.pl.heatmap(adata)
-```
 
-### Top gene loadings per program
+# Clustering threshold sweep — run after select_threshold
+ax = jz.pl.threshold(adata)
 
-```python
+# Top gene loadings per program — run after cluster
 fig = jz.pl.loadings(adata, n_top_genes=15)
-```
 
-### Association results
-
-```python
+# Association results — run after associate
 ax = jz.pl.associate(adata, padj_thresh=0.05)
-```
 
-### Per-cell program scores on embedding
-
-```python
+# Per-cell program scores on embedding — run after score
 sc.pp.neighbors(adata)
 sc.tl.umap(adata)
 fig = jz.pl.scores(adata, basis="X_umap")
-```
 
-### Gene set annotation dot plot
-
-```python
+# Gene set annotation dot plot — run after annotate
 ax = jz.pl.annotate(adata, top_n=10, padj_thresh=0.05)
 ```
 
@@ -344,35 +330,20 @@ ax = jz.pl.annotate(adata, top_n=10, padj_thresh=0.05)
 
 ## Utilities
 
-### Extract top genes per program
-
-Returns a `{"C0": ["GENE1", ...], "C1": [...], ...}` dict without requiring `score` to be run first — useful for rapid biological inspection immediately after clustering.
-
 ```python
+# Extract top genes per program — does not require score to be run first
 genes = jz.ut.program_genes(adata, n_top_genes=50, use_specificity=True)
-```
 
-### Compare programs across two datasets
-
-Returns a `(n_programs_a × n_programs_b)` Jaccard similarity DataFrame. Useful for identifying shared programs across lineages or conditions.
-
-```python
+# Compare programs across two datasets — useful for cross-lineage comparison
 df = jz.ut.program_compare(adata_lhs, adata_lasp, n_top_genes=50)
-```
 
-### Per-donor factor contribution
-
-Returns a `(n_donors × n_programs)` DataFrame of factor counts. Reveals whether any single donor dominates a program, which may indicate a donor-specific rather than consensus signal.
-
-```python
+# Per-donor factor contribution — reveals donor dominance
 df = jz.ut.program_donors(adata)
 ```
 
 ---
 
 ## Gene sets
-
-juzi bundles several gene set collections accessible via `juzi.mg`:
 
 ```python
 # List available collections
@@ -391,52 +362,10 @@ cp = jz.mg.CancerPathways()
 cb = jz.mg.CancerBreast()
 
 # MSigDB 3CA meta-programs (Gavish et al. 2023)
-mg = jz.mg.MsigDB3CA()
-mg.as_dict()  # pass all 3CA programs to annotate
-```
+mg = jz.mg.Hallmark3CA()
 
-To load your own MSigDB collection:
-
-```python
-# Download the .txt file from https://www.gsea-msigdb.org
-gene_sets = jz.mg.read_msigdb(
-    path="msigdb_human.txt",
-    collections=["H"],   # Hallmarks only
-)
-```
-
----
-
-## The keep mask system
-
-juzi uses a three-stage boolean mask system to track which factors are retained at each step. This allows any step to be re-run with different parameters without invalidating upstream results.
-
-| Mask | Set by | Meaning |
-|---|---|---|
-| `juzi_keep_prune` | `prune` | Factors that recur across k resolutions |
-| `juzi_keep_similarity` | `similarity`, `select_similarity` | Factors with non-zero similarity and above min_similarity |
-| `juzi_keep_cluster` | `cluster` | Factors surviving min_cluster filtering |
-| `juzi_keep` | All of the above | Intersection — final set of factors used by cluster |
-
-Re-running any step only updates its own mask and recomputes `juzi_keep`:
-
-```python
-# Run similarity once
-jz.gp.similarity(adata, distance="jaccard", top_k=50)
-
-# Inspect the retention curve
-ax = jz.pl.similarity(adata)
-
-# Try different thresholds without re-running similarity
-jz.gp.select_similarity(adata, min_similarity=0.1)
-jz.gp.cluster(adata, threshold=0.1, min_cluster=3)
-
-# Try a stricter threshold — only juzi_keep_similarity changes
-jz.gp.select_similarity(adata, min_similarity=0.3)
-jz.gp.cluster(adata, threshold=0.1, min_cluster=3)
-
-# Re-run cluster with different parameters — only juzi_keep_cluster changes
-jz.gp.cluster(adata, threshold=0.2, min_cluster=5)
+# Load your own MSigDB collection
+gene_sets = jz.mg.read_msigdb("msigdb_human.txt", collections=["H"])
 ```
 
 ---
@@ -453,14 +382,14 @@ adata = sc.read_h5ad("mammary_gland.h5ad")
 # Preprocessing (outside juzi)
 sc.pp.highly_variable_genes(adata, n_top_genes=3000)
 
-# Step 1 — NMF (always returns new AnnData)
+# Step 1 — NMF
 adata = jz.gp.nmf(
     adata,
     key="donor_id",
     k=[7, 8, 9, 10],
     min_cells=10,
     genes="highly_variable",
-    genes_force=age_degs,  # force include age-associated DEGs
+    genes_force=age_degs,
     seed=42,
 )
 
@@ -470,43 +399,52 @@ jz.gp.prune(adata, top_k=50, min_similarity=0.1, min_k=1)
 # Step 3 — Similarity
 jz.gp.similarity(adata, distance="jaccard", top_k=50)
 
-# Step 3b — Inspect and apply threshold
+# Step 3b — Inspect and apply similarity threshold
 ax = jz.pl.similarity(adata)
 jz.gp.select_similarity(adata, min_similarity=0.2)
 
-# Step 4 — Cluster
-jz.gp.cluster(adata, threshold=0.1, min_cluster=3)
+# Step 4 — Select clustering threshold
+optimal = jz.gp.select_threshold(adata, min_cluster=3, metric="ratio")
+ax      = jz.pl.threshold(adata)
+
+# Step 5 — Cluster
+jz.gp.cluster(adata, threshold=optimal, min_cluster=3)
+
+# Step 5b — Inspect and optionally merge programs
+ax  = jz.pl.heatmap(adata)
+fig = jz.pl.loadings(adata, n_top_genes=15)
 
 # Inspect programs before scoring
 genes = jz.ut.program_genes(adata, n_top_genes=20)
 df    = jz.ut.program_donors(adata)
 
-# Step 5 — Score
+# Merge if needed
+jz.gp.merge_clusters(adata, clusters=[0, 2])
+
+# Step 6 — Score
 jz.gp.score(adata, n_top_genes=50, seed=42)
 
-# Step 6 — Aggregate
+# Step 7 — Aggregate
 jz.gp.aggregate(
     adata,
     key="donor_id",
     obs_cols=["age", "study_id", "donor_brca"],
 )
 
-# Step 7 — Associate
+# Step 8 — Associate
 jz.gp.associate(
     adata,
     formula="age + donor_brca + (1|study_id)",
 )
 
-# Step 8 — Annotate
+# Step 9 — Annotate
 jz.gp.annotate(
     adata,
-    gene_sets=jz.mg.MsigDB3CA(),
+    gene_sets=jz.mg.Hallmark3CA(),
     n_top_genes=50,
 )
 
 # Plot results
-ax  = jz.pl.heatmap(adata)
-fig = jz.pl.loadings(adata, n_top_genes=15)
 ax  = jz.pl.associate(adata, padj_thresh=0.05)
 ax  = jz.pl.annotate(adata, top_n=10, padj_thresh=0.05)
 fig = jz.pl.scores(adata, basis="X_umap")
@@ -564,6 +502,14 @@ df_compare = jz.ut.program_compare(adata_lhs, adata_lasp, n_top_genes=50)
 |---|---|---|
 | `min_similarity` | required | Minimum similarity threshold in [0, 1] |
 
+### `jz.gp.select_threshold`
+
+| Parameter | Default | Description |
+|---|---|---|
+| `thresholds` | `linspace(0, 1, 50)` | Grid of threshold values to evaluate |
+| `min_cluster` | `2` | Must match value used in `cluster` |
+| `metric` | `"ratio"` | `"ratio"`, `"delta"`, or `"silhouette"` |
+
 ### `jz.gp.cluster`
 
 | Parameter | Default | Description |
@@ -571,6 +517,12 @@ df_compare = jz.ut.program_compare(adata_lhs, adata_lasp, n_top_genes=50)
 | `threshold` | `0.1` | Merge until max inter-cluster similarity < threshold |
 | `min_cluster` | `2` | Minimum unique donors per cluster |
 | `reorder` | `True` | Sort clusters by size |
+
+### `jz.gp.merge_clusters`
+
+| Parameter | Default | Description |
+|---|---|---|
+| `clusters` | required | `[0, 2]` to merge C0 and C2, or `[[0,2],[1,3]]` for multiple merges |
 
 ### `jz.gp.score`
 
