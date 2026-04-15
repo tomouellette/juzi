@@ -155,7 +155,7 @@ def nmf(
 
     if genes_force is not None:
         genes_force = np.asarray(genes_force)
-        missing     = genes_force[~np.isin(genes_force, adata.var_names)]
+        missing = genes_force[~np.isin(genes_force, adata.var_names)]
         if len(missing) > 0:
             warnings.warn(
                 f"{len(missing)} gene(s) in genes_force not found in "
@@ -164,8 +164,8 @@ def nmf(
                 stacklevel=2,
             )
         force_mask = adata.var_names.isin(genes_force)
-        n_added    = (force_mask & ~gene_mask).sum()
-        gene_mask  = gene_mask | force_mask
+        n_added = (force_mask & ~gene_mask).sum()
+        gene_mask = gene_mask | force_mask
 
         if n_added > 0 and not silent:
             warnings.warn(
@@ -190,7 +190,7 @@ def nmf(
 
     # Sample filtering
 
-    cell_counts   = adata.obs[key].value_counts()
+    cell_counts = adata.obs[key].value_counts()
     valid_samples = cell_counts[cell_counts >= min_cells].index.to_numpy()
 
     if len(valid_samples) == 0:
@@ -213,7 +213,7 @@ def nmf(
     # Build per-sample cell index arrays
 
     sample_order = np.array(sorted(valid_samples))
-    idx          = [np.where(adata.obs[key].values == s)[0] for s in sample_order]
+    idx = [np.where(adata.obs[key].values == s)[0] for s in sample_order]
 
     # Parallel NMF fits
 
@@ -243,11 +243,11 @@ def nmf(
 
     # Store results
 
-    n_comps  = int(np.sum(k))
+    n_comps = int(np.sum(k))
     n_factors = len(sample_order) * n_comps
 
-    adata.uns["juzi_k"]      = list(k)
-    adata.uns["juzi_names"]  = np.repeat(sample_order, n_comps).tolist()
+    adata.uns["juzi_k"] = list(k)
+    adata.uns["juzi_names"] = np.repeat(sample_order, n_comps).tolist()
     adata.uns["juzi_G_genes"] = (
         adata.var[gene_names_col].tolist()
         if gene_names_col is not None
@@ -268,10 +268,10 @@ def nmf(
 
     # Initialise stage keep masks
 
-    adata.uns["juzi_keep_prune"]      = np.ones(n_factors, dtype=bool)
+    adata.uns["juzi_keep_prune"] = np.ones(n_factors, dtype=bool)
     adata.uns["juzi_keep_similarity"] = np.ones(n_factors, dtype=bool)
-    adata.uns["juzi_keep_cluster"]    = np.ones(n_factors, dtype=bool)
-    adata.uns["juzi_keep"]            = np.ones(n_factors, dtype=bool)
+    adata.uns["juzi_keep_cluster"] = np.ones(n_factors, dtype=bool)
+    adata.uns["juzi_keep"] = np.ones(n_factors, dtype=bool)
 
     return adata
 
@@ -279,8 +279,9 @@ def nmf(
 def _recompute_keep(adata: AnnData) -> None:
     """Recompute juzi_keep as the intersection of all three stage masks.
 
-    If any stage mask is absent it is treated as all True — this allows
-    functions to be run independently without requiring all upstream steps.
+    All three masks must be length n_total. If any stage mask is absent
+    it is treated as all True — this allows functions to be run
+    independently without requiring all upstream steps.
 
     Parameters
     ----------
@@ -293,9 +294,9 @@ def _recompute_keep(adata: AnnData) -> None:
             adata.uns[key] = np.ones(n, dtype=bool)
 
     adata.uns["juzi_keep"] = (
-        adata.uns["juzi_keep_prune"]      &
-        adata.uns["juzi_keep_similarity"] &
-        adata.uns["juzi_keep_cluster"]
+        adata.uns["juzi_keep_prune"]
+        & adata.uns["juzi_keep_similarity"]
+        & adata.uns["juzi_keep_cluster"]
     )
 
 
@@ -325,9 +326,9 @@ def _nmf(
     X = np.clip(X, 0, None)
 
     if normalize:
-        row_sums            = X.sum(axis=1, keepdims=True)
+        row_sums = X.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
-        X                   = target_sum * X / row_sums
+        X = target_sum * X / row_sums
 
     if log1p:
         X = np.log1p(X)

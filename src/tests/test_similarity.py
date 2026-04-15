@@ -139,6 +139,12 @@ def test_similarity_matrix_in_uns():
     assert "juzi_similarity" in adata.uns
 
 
+def test_similarity_idx_in_uns():
+    adata = make_adata()
+    jz.gp.similarity(adata)
+    assert "juzi_similarity_idx" in adata.uns
+
+
 def test_juzi_keep_similarity_in_uns():
     adata = make_adata()
     jz.gp.similarity(adata)
@@ -151,12 +157,38 @@ def test_juzi_keep_in_uns():
     assert "juzi_keep" in adata.uns
 
 
-def test_similarity_matrix_shape():
-    adata     = make_adata(n_samples=2, k=[3])
+def test_similarity_matrix_shape_matches_kept_factors():
+    """juzi_similarity shape must be (n_kept × n_kept) not (n_total × n_total)."""
+    adata = make_adata_pruned()
     jz.gp.similarity(adata)
-    n_factors = adata.varm["juzi_G"].shape[1]
-    sim       = adata.uns["juzi_similarity"]
-    assert sim.shape == (n_factors, n_factors)
+    n_kept = adata.uns["juzi_keep"].sum()
+    sim    = adata.uns["juzi_similarity"]
+    assert sim.shape == (n_kept, n_kept)
+
+
+def test_similarity_idx_length_matches_kept_factors():
+    adata  = make_adata_pruned()
+    jz.gp.similarity(adata)
+    n_kept = adata.uns["juzi_keep"].sum()
+    assert len(adata.uns["juzi_similarity_idx"]) == n_kept
+
+
+def test_similarity_idx_are_valid_global_indices():
+    """sim_idx values must be valid indices into juzi_G columns."""
+    adata    = make_adata_pruned()
+    jz.gp.similarity(adata)
+    n_total  = adata.varm["juzi_G"].shape[1]
+    sim_idx  = adata.uns["juzi_similarity_idx"]
+    assert (sim_idx >= 0).all()
+    assert (sim_idx < n_total).all()
+
+
+def test_similarity_idx_matches_juzi_keep():
+    """sim_idx must be exactly the global indices where juzi_keep is True."""
+    adata   = make_adata_pruned()
+    jz.gp.similarity(adata)
+    expected = np.where(adata.uns["juzi_keep"])[0]
+    np.testing.assert_array_equal(adata.uns["juzi_similarity_idx"], expected)
 
 
 def test_similarity_matrix_symmetric():
@@ -191,21 +223,26 @@ def test_juzi_keep_similarity_is_bool():
     assert adata.uns["juzi_keep_similarity"].dtype == bool
 
 
-def test_juzi_keep_is_bool():
-    adata = make_adata()
+def test_juzi_keep_similarity_length_is_n_total():
+    """juzi_keep_similarity must be length n_total not n_kept."""
+    adata     = make_adata_pruned()
     jz.gp.similarity(adata)
-    assert adata.uns["juzi_keep"].dtype == bool
+    n_total   = adata.varm["juzi_G"].shape[1]
+    assert len(adata.uns["juzi_keep_similarity"]) == n_total
 
 
-def test_juzi_keep_similarity_length_matches_factors():
-    adata     = make_adata(n_samples=2, k=[3, 4])
+def test_juzi_keep_similarity_false_outside_sim_idx():
+    """Factors not in sim_idx must be False in juzi_keep_similarity."""
+    adata   = make_adata_pruned()
     jz.gp.similarity(adata)
-    n_factors = adata.varm["juzi_G"].shape[1]
-    assert len(adata.uns["juzi_keep_similarity"]) == n_factors
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    n_total = adata.varm["juzi_G"].shape[1]
+    outside = np.ones(n_total, dtype=bool)
+    outside[sim_idx] = False
+    assert not adata.uns["juzi_keep_similarity"][outside].any()
 
 
 def test_juzi_keep_is_intersection():
-    """juzi_keep must equal the AND of all three stage masks after similarity."""
     adata = make_adata()
     jz.gp.similarity(adata)
     expected = (
@@ -217,8 +254,7 @@ def test_juzi_keep_is_intersection():
 
 
 def test_upstream_masks_not_modified_by_similarity():
-    """similarity must only modify juzi_keep_similarity."""
-    adata = make_adata_pruned()
+    adata        = make_adata_pruned()
     prune_before = adata.uns["juzi_keep_prune"].copy()
     jz.gp.similarity(adata)
     np.testing.assert_array_equal(adata.uns["juzi_keep_prune"], prune_before)
@@ -230,30 +266,35 @@ def test_upstream_masks_not_modified_by_similarity():
 def test_drop_zeros_removes_all_zero_rows():
     adata = make_adata()
     jz.gp.similarity(adata, drop_zeros=True)
-    sim  = adata.uns["juzi_similarity"]
-    keep = adata.uns["juzi_keep_similarity"]
-    assert not np.isclose(sim[keep], 0).all(axis=1).any()
+    sim     = adata.uns["juzi_similarity"]
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    keep    = adata.uns["juzi_keep_similarity"]
+    # Map keep back to local indices
+    local_keep = keep[sim_idx]
+    assert not np.isclose(sim[local_keep], 0).all(axis=1).any()
 
 
-def test_drop_zeros_false_keeps_all():
-    """With drop_zeros=False all factors should be kept in juzi_keep_similarity."""
-    adata = make_adata()
+def test_drop_zeros_false_all_sim_idx_kept():
+    adata   = make_adata()
     jz.gp.similarity(adata, drop_zeros=False)
-    assert adata.uns["juzi_keep_similarity"].all()
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    keep    = adata.uns["juzi_keep_similarity"]
+    assert keep[sim_idx].all()
 
 
 # select_similarity
 
 
 def test_select_similarity_filters_weak_factors():
-    """Factors kept after select_similarity must exceed the threshold."""
     adata     = make_adata()
     threshold = 0.3
     jz.gp.similarity(adata, drop_zeros=False)
     jz.gp.select_similarity(adata, min_similarity=threshold)
-    sim  = adata.uns["juzi_similarity"]
-    keep = adata.uns["juzi_keep_similarity"]
-    assert (sim[keep].max(axis=1) >= threshold).all()
+    sim     = adata.uns["juzi_similarity"]
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    keep    = adata.uns["juzi_keep_similarity"]
+    local_keep = keep[sim_idx]
+    assert (sim[local_keep].max(axis=1) >= threshold).all()
 
 
 def test_select_similarity_strict_keeps_fewer():
@@ -270,7 +311,6 @@ def test_select_similarity_strict_keeps_fewer():
 
 
 def test_select_similarity_reruns_update_keep():
-    """Re-running select_similarity with a stricter threshold updates juzi_keep."""
     adata = make_adata()
     jz.gp.similarity(adata, drop_zeros=False)
     jz.gp.select_similarity(adata, min_similarity=0.1)
@@ -280,8 +320,18 @@ def test_select_similarity_reruns_update_keep():
     assert keep_strict <= keep_loose
 
 
+def test_select_similarity_preserves_drop_zeros():
+    adata = make_adata()
+    jz.gp.similarity(adata, drop_zeros=True)
+    drop_zeros_mask = adata.uns["juzi_keep_similarity"].copy()
+    jz.gp.select_similarity(adata, min_similarity=0.0)
+    np.testing.assert_array_equal(
+        adata.uns["juzi_keep_similarity"],
+        drop_zeros_mask,
+    )
+
+
 def test_select_similarity_recomputes_juzi_keep():
-    """select_similarity must recompute juzi_keep as intersection."""
     adata = make_adata_pruned()
     jz.gp.similarity(adata, drop_zeros=False)
     jz.gp.select_similarity(adata, min_similarity=0.3)
@@ -293,21 +343,8 @@ def test_select_similarity_recomputes_juzi_keep():
     np.testing.assert_array_equal(adata.uns["juzi_keep"], expected)
 
 
-def test_select_similarity_preserves_drop_zeros():
-    """select_similarity should not un-mask factors removed by drop_zeros."""
-    adata = make_adata()
-    jz.gp.similarity(adata, drop_zeros=True)
-    drop_zeros_mask = adata.uns["juzi_keep_similarity"].copy()
-    # Run select_similarity at zero threshold — should not restore zero rows
-    jz.gp.select_similarity(adata, min_similarity=0.0)
-    np.testing.assert_array_equal(
-        adata.uns["juzi_keep_similarity"],
-        drop_zeros_mask,
-    )
-
-
 def test_select_similarity_does_not_modify_prune_mask():
-    adata = make_adata_pruned()
+    adata        = make_adata_pruned()
     jz.gp.similarity(adata)
     prune_before = adata.uns["juzi_keep_prune"].copy()
     jz.gp.select_similarity(adata, min_similarity=0.3)
@@ -323,7 +360,7 @@ def test_select_similarity_copy_false():
 
 
 def test_select_similarity_copy_true():
-    adata  = make_adata()
+    adata       = make_adata()
     jz.gp.similarity(adata)
     keep_before = adata.uns["juzi_keep_similarity"].copy()
     result      = jz.gp.select_similarity(adata, min_similarity=0.9, copy=True)
@@ -332,7 +369,6 @@ def test_select_similarity_copy_true():
 
 
 def test_juzi_keep_preserved_from_prune():
-    """Factors masked by prune should remain masked after similarity."""
     adata       = make_adata_pruned()
     keep_before = adata.uns["juzi_keep"].copy()
     jz.gp.similarity(adata, drop_zeros=False)
@@ -347,10 +383,11 @@ def test_juzi_keep_preserved_from_prune():
 def test_intra_sample_true_computes_all_pairs():
     adata = make_adata(n_samples=2, k=[2])
     jz.gp.similarity(adata, intra_sample=True)
-    sim   = adata.uns["juzi_similarity"]
-    names = np.array(adata.uns["juzi_names"])
-    n     = len(names)
-    intra = np.array([
+    sim     = adata.uns["juzi_similarity"]
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    names   = np.array(adata.uns["juzi_names"])[sim_idx]
+    n       = len(names)
+    intra   = np.array([
         sim[i, j]
         for i in range(n) for j in range(i+1, n)
         if names[i] == names[j]
@@ -359,11 +396,12 @@ def test_intra_sample_true_computes_all_pairs():
 
 
 def test_intra_sample_false_zeros_intra_pairs():
-    adata = make_adata(n_samples=2, k=[2])
+    adata   = make_adata(n_samples=2, k=[2])
     jz.gp.similarity(adata, intra_sample=False)
-    sim   = adata.uns["juzi_similarity"]
-    names = np.array(adata.uns["juzi_names"])
-    n     = len(names)
+    sim     = adata.uns["juzi_similarity"]
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    names   = np.array(adata.uns["juzi_names"])[sim_idx]
+    n       = len(names)
     for i in range(n):
         for j in range(n):
             if names[i] == names[j] and i != j:

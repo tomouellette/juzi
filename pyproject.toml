@@ -15,7 +15,8 @@ dependencies = [
     "statsmodels",
     "matplotlib",
     "joblib",
-    "glasbey"
+    "glasbey",
+    "juzi",
 ]
 
 [tool.setuptools]
@@ -44,3 +45,6 @@ ignore = ["F722"]
 [tool.ruff.lint]
 # E402 is "Module level import not at top of file"
 per-file-ignores = { "__init__.py" = ["E402"] }
+
+[tool.uv.sources]
+juzi = { workspace = true }

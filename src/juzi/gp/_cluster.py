@@ -28,11 +28,11 @@ def cluster(
     samples are removed and the procedure repeats until all remaining
     clusters meet the minimum sample requirement.
 
-    Factors removed by min_cluster are tracked in juzi_keep_cluster.
-    juzi_keep is recomputed as the intersection of juzi_keep_prune,
-    juzi_keep_similarity, and juzi_keep_cluster. Re-running cluster
-    with different parameters only updates juzi_keep_cluster — upstream
-    masks are never modified.
+    Factors removed by min_cluster are tracked in juzi_keep_cluster
+    (length n_total). juzi_keep is recomputed as the intersection of
+    juzi_keep_prune, juzi_keep_similarity, and juzi_keep_cluster.
+    Re-running cluster only resets juzi_keep_cluster — upstream masks
+    are never modified.
 
     Parameters
     ----------
@@ -44,8 +44,7 @@ def cluster(
         this value. Higher values produce more clusters. Must be in [0, 1].
     min_cluster : int
         Minimum number of unique samples that must contribute factors to
-        a cluster for it to be retained. Clusters below this threshold
-        are removed and clustering is repeated on the remaining factors.
+        a cluster for it to be retained. Must be >= 1.
     reorder : bool
         If True, clusters are sorted by size (largest first) and factors
         within each cluster are sorted by internal similarity.
@@ -56,13 +55,11 @@ def cluster(
     -------
     AnnData | None
         AnnData with the following fields populated:
-            .uns["juzi_keep_cluster"]       : boolean mask of factors retained
-                                              after min_cluster filtering
+            .uns["juzi_keep_cluster"]       : boolean mask length n_total
             .uns["juzi_keep"]               : intersection of all three stage masks
             .uns["juzi_cluster_similarity"] : reordered factor similarity matrix
             .uns["juzi_cluster_labels"]     : cluster label per retained factor
-            .uns["juzi_cluster_names"]      : donor name per retained factor,
-                                              aligned to juzi_cluster_labels
+            .uns["juzi_cluster_names"]      : donor name per retained factor
             .uns["juzi_cluster_G"]          : centroid gene loading per cluster
             .uns["juzi_cluster_samples"]    : unique sample names per cluster
             .uns["juzi_cluster_stats"]      : silhouette, inner/outer similarity
@@ -73,8 +70,9 @@ def cluster(
 
     for field, store in [
         ("juzi_similarity", "uns"),
-        ("juzi_names",      "uns"),
-        ("juzi_G",          "varm"),
+        ("juzi_similarity_idx", "uns"),
+        ("juzi_names", "uns"),
+        ("juzi_G", "varm"),
     ]:
         if field not in getattr(adata, store):
             raise KeyError(
@@ -89,24 +87,33 @@ def cluster(
         raise ValueError("min_cluster must be >= 1.")
 
     # Initialise juzi_keep_cluster
-    # Reset to all True at the start of each cluster run so re-running
-    # with different parameters gives a clean slate for this stage mask.
+    # Reset to all True (n_total length) at the start of each run.
 
-    n_factors = adata.uns["juzi_similarity"].shape[0]
-    adata.uns["juzi_keep_cluster"] = np.ones(n_factors, dtype=bool)
+    n_total = adata.varm["juzi_G"].shape[1]
+    adata.uns["juzi_keep_cluster"] = np.ones(n_total, dtype=bool)
     _recompute_keep(adata)
 
-    full_G     = adata.varm["juzi_G"].T # (n_factors × n_genes)
-    full_names = np.array(adata.uns["juzi_names"])
+    # Setup
+    # juzi_similarity is (n_kept × n_kept) in the pruned+similarity space.
+    # sim_idx maps local row/col indices → global factor indices.
+    # juzi_keep gives the current set of globally retained factors.
+    # cluster_mask is a LOCAL boolean mask over the n_kept similarity rows.
+
+    sim_idx = adata.uns["juzi_similarity_idx"]  # (n_kept,) global indices
+    full_G = adata.varm["juzi_G"].T  # (n_total × n_genes)
+    full_names = np.array(adata.uns["juzi_names"])  # (n_total,)
+
+    # juzi_keep within the similarity space — local mask for rows/cols
+    # A factor passes if it is True in juzi_keep AND is in sim_idx
+    global_keep = adata.uns["juzi_keep"]
+    cluster_mask = global_keep[sim_idx]  # (n_kept,) local mask
 
     # Iterative clustering
 
-    cluster_mask = adata.uns["juzi_keep"].copy()
-
     while True:
-        S     = adata.uns["juzi_similarity"][np.ix_(cluster_mask, cluster_mask)]
-        names = full_names[cluster_mask]
-        n     = S.shape[0]
+        S = adata.uns["juzi_similarity"][np.ix_(cluster_mask, cluster_mask)]
+        names = full_names[sim_idx[cluster_mask]]
+        n = S.shape[0]
 
         if n == 0:
             raise ValueError(
@@ -121,7 +128,7 @@ def cluster(
             )
 
         leaf_order = sp.cluster.hierarchy.leaves_list(Z)
-        clusters   = np.empty(n, dtype=int)
+        clusters = np.empty(n, dtype=int)
         for new_label, position in enumerate(leaf_order):
             clusters[position] = new_label
 
@@ -133,41 +140,46 @@ def cluster(
             clusters[clusters == clusters[j]] = clusters[i]
 
         unique_clusters = np.unique(clusters)
-        sample_counts   = np.array([
-            len(np.unique(names[clusters == c]))
-            for c in unique_clusters
-        ])
+        sample_counts = np.array(
+            [len(np.unique(names[clusters == c])) for c in unique_clusters]
+        )
 
         passes = sample_counts >= min_cluster
 
         if passes.all():
             break
 
+        # Remove factors from under-represented clusters
+        # cluster_mask is local (n_kept) — update it in local space
         keep_clusters = unique_clusters[passes]
         factor_passes = np.isin(clusters, keep_clusters)
-        mask_indices  = np.where(cluster_mask)[0]
-        cluster_mask[mask_indices[~factor_passes]] = False
+        local_indices = np.where(cluster_mask)[0]  # local indices that were active
+        cluster_mask[local_indices[~factor_passes]] = False
 
-    # Update juzi_keep_cluster and recompute juzi_keep
+    # Map cluster_mask back to global space for juzi_keep_cluster
 
-    adata.uns["juzi_keep_cluster"] = cluster_mask
+    keep_cluster_global = np.zeros(n_total, dtype=bool)
+    keep_cluster_global[sim_idx[cluster_mask]] = True
+    adata.uns["juzi_keep_cluster"] = keep_cluster_global
     _recompute_keep(adata)
+
+    # Extract G and names for retained factors
+
+    G_masked = full_G[sim_idx[cluster_mask]]  # (n_active × n_genes)
 
     # Reorder
 
-    G_masked = full_G[cluster_mask]
-
     if reorder:
         reorder_idx = _reorder_clusters(S, clusters)
-        S           = S[np.ix_(reorder_idx, reorder_idx)]
-        names       = names[reorder_idx]
-        clusters    = clusters[reorder_idx]
-        G_masked    = G_masked[reorder_idx]
+        S = S[np.ix_(reorder_idx, reorder_idx)]
+        names = names[reorder_idx]
+        clusters = clusters[reorder_idx]
+        G_masked = G_masked[reorder_idx]
 
     # Remap cluster labels
 
     _, first_occurrence = np.unique(clusters, return_index=True)
-    ordered_old         = clusters[np.sort(first_occurrence)]
+    ordered_old = clusters[np.sort(first_occurrence)]
 
     remapped = np.empty_like(clusters)
     for new_label, old_label in enumerate(ordered_old):
@@ -177,16 +189,14 @@ def cluster(
     # Centroid gene loadings
 
     unique_clusters = np.unique(clusters)
-    cluster_G       = np.array([
-        G_masked[clusters == c].mean(axis=0)
-        for c in unique_clusters
-    ])
+    cluster_G = np.array(
+        [G_masked[clusters == c].mean(axis=0) for c in unique_clusters]
+    )
 
     # Per-cluster sample lists
 
     cluster_samples = {
-        int(c): np.unique(names[clusters == c]).tolist()
-        for c in unique_clusters
+        int(c): np.unique(names[clusters == c]).tolist() for c in unique_clusters
     }
 
     # Cluster quality statistics
@@ -194,32 +204,34 @@ def cluster(
     inner_mask = clusters[:, None] == clusters[None, :]
     outer_mask = ~inner_mask
 
-    inner_sim  = float(S[inner_mask].mean()) if inner_mask.any() else 0.0
-    outer_sim  = float(S[outer_mask].mean()) if outer_mask.any() else 0.0
+    inner_sim = float(S[inner_mask].mean()) if inner_mask.any() else 0.0
+    outer_sim = float(S[outer_mask].mean()) if outer_mask.any() else 0.0
 
-    sil_score   = None
-    nc          = len(unique_clusters)
+    sil_score = None
+    nc = len(unique_clusters)
     dist_matrix = 1.0 - S
     np.fill_diagonal(dist_matrix, 0.0)
 
     if nc > 1 and nc < S.shape[0] - 1:
-        sil_score = float(silhouette_score(
-            dist_matrix,
-            clusters,
-            metric="precomputed",
-        ))
+        sil_score = float(
+            silhouette_score(
+                dist_matrix,
+                clusters,
+                metric="precomputed",
+            )
+        )
 
     # Store results
 
     adata.uns["juzi_cluster_similarity"] = S
-    adata.uns["juzi_cluster_labels"]     = clusters
-    adata.uns["juzi_cluster_names"]      = names.tolist()
-    adata.uns["juzi_cluster_G"]          = cluster_G
-    adata.uns["juzi_cluster_samples"]    = cluster_samples
-    adata.uns["juzi_cluster_stats"]      = {
+    adata.uns["juzi_cluster_labels"] = clusters
+    adata.uns["juzi_cluster_names"] = names.tolist()
+    adata.uns["juzi_cluster_G"] = cluster_G
+    adata.uns["juzi_cluster_samples"] = cluster_samples
+    adata.uns["juzi_cluster_stats"] = {
         "silhouette_score": sil_score,
-        "inner_similarity":  inner_sim,
-        "outer_similarity":  outer_sim,
+        "inner_similarity": inner_sim,
+        "outer_similarity": outer_sim,
     }
 
     return adata if copy else None
@@ -230,16 +242,15 @@ def _find_max_similar(
     clusters: np.ndarray,
     threshold: float,
 ) -> Tuple[int, int] | None:
-    """Find the pair of clusters with the highest mean inter-cluster similarity."""
     c_unique, first_indices = np.unique(clusters, return_index=True)
-    c_counts                = np.array([np.sum(clusters == c) for c in c_unique])
+    c_counts = np.array([np.sum(clusters == c) for c in c_unique])
 
-    X         = (clusters[:, None] == c_unique[None, :]).astype(float)
-    sum_sims  = X.T @ S @ X
+    X = (clusters[:, None] == c_unique[None, :]).astype(float)
+    sum_sims = X.T @ S @ X
     mean_sims = sum_sims / np.outer(c_counts, c_counts)
     np.fill_diagonal(mean_sims, -np.inf)
 
-    best_idx       = int(np.argmax(mean_sims))
+    best_idx = int(np.argmax(mean_sims))
     max_similarity = float(mean_sims.flat[best_idx])
 
     if max_similarity <= threshold:
@@ -253,18 +264,17 @@ def _reorder_clusters(
     S: np.ndarray,
     clusters: np.ndarray,
 ) -> np.ndarray:
-    """Reorder factors so clusters are sorted by size and internally by similarity."""
     c_unique = np.unique(clusters)
-    c_sizes  = {c: np.sum(clusters == c) for c in c_unique}
+    c_sizes = {c: np.sum(clusters == c) for c in c_unique}
     c_sorted = sorted(c_unique, key=lambda c: c_sizes[c], reverse=True)
 
     reorder_idx = []
     for c in c_sorted:
         idx = np.where(clusters == c)[0]
         if len(idx) > 1:
-            Si        = S[np.ix_(idx, idx)]
-            D         = sp.spatial.distance.squareform(1.0 - Si, checks=False)
-            Z         = sp.cluster.hierarchy.linkage(D, method="average")
+            Si = S[np.ix_(idx, idx)]
+            D = sp.spatial.distance.squareform(1.0 - Si, checks=False)
+            Z = sp.cluster.hierarchy.linkage(D, method="average")
             sub_order = sp.cluster.hierarchy.leaves_list(Z)
             reorder_idx.extend(idx[sub_order].tolist())
         else:

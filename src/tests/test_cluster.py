@@ -65,6 +65,13 @@ def test_error_missing_juzi_similarity():
         jz.gp.cluster(adata)
 
 
+def test_error_missing_juzi_similarity_idx():
+    adata = make_adata()
+    del adata.uns["juzi_similarity_idx"]
+    with pytest.raises(KeyError):
+        jz.gp.cluster(adata)
+
+
 def test_error_missing_juzi_names():
     adata = make_adata()
     del adata.uns["juzi_names"]
@@ -102,6 +109,7 @@ def test_output_fields_present():
     jz.gp.cluster(adata, min_cluster=1)
     assert "juzi_cluster_similarity" in adata.uns
     assert "juzi_cluster_labels"     in adata.uns
+    assert "juzi_cluster_names"      in adata.uns
     assert "juzi_cluster_G"          in adata.uns
     assert "juzi_cluster_samples"    in adata.uns
     assert "juzi_cluster_stats"      in adata.uns
@@ -119,15 +127,15 @@ def test_juzi_keep_cluster_is_bool():
     assert adata.uns["juzi_keep_cluster"].dtype == bool
 
 
-def test_juzi_keep_cluster_length_matches_factors():
+def test_juzi_keep_cluster_length_is_n_total():
+    """juzi_keep_cluster must be length n_total not n_kept."""
     adata     = make_adata()
     jz.gp.cluster(adata, min_cluster=1)
-    n_factors = adata.varm["juzi_G"].shape[1]
-    assert len(adata.uns["juzi_keep_cluster"]) == n_factors
+    n_total   = adata.varm["juzi_G"].shape[1]
+    assert len(adata.uns["juzi_keep_cluster"]) == n_total
 
 
 def test_juzi_keep_is_intersection_after_cluster():
-    """juzi_keep must equal the AND of all three stage masks after cluster."""
     adata = make_adata()
     jz.gp.cluster(adata, min_cluster=1)
     expected = (
@@ -139,8 +147,7 @@ def test_juzi_keep_is_intersection_after_cluster():
 
 
 def test_upstream_masks_not_modified_by_cluster():
-    """cluster must only modify juzi_keep_cluster — not prune or similarity masks."""
-    adata = make_adata_pruned()
+    adata             = make_adata_pruned()
     prune_before      = adata.uns["juzi_keep_prune"].copy()
     similarity_before = adata.uns["juzi_keep_similarity"].copy()
     jz.gp.cluster(adata, threshold=0.3, min_cluster=1)
@@ -149,18 +156,16 @@ def test_upstream_masks_not_modified_by_cluster():
 
 
 def test_cluster_rerun_resets_keep_cluster():
-    """Re-running cluster with different params should reset juzi_keep_cluster."""
     adata = make_adata(n_samples=6, seed=0)
     jz.gp.cluster(adata, threshold=0.1, min_cluster=1)
     keep_loose = adata.uns["juzi_keep_cluster"].sum()
     jz.gp.cluster(adata, threshold=0.5, min_cluster=2)
     keep_strict = adata.uns["juzi_keep_cluster"].sum()
-    # Stricter params should keep fewer or equal factors
     assert keep_strict <= keep_loose
 
 
 def test_cluster_labels_contiguous():
-    adata = make_adata()
+    adata  = make_adata()
     jz.gp.cluster(adata, min_cluster=1)
     labels = adata.uns["juzi_cluster_labels"]
     unique = np.unique(labels)
@@ -168,6 +173,7 @@ def test_cluster_labels_contiguous():
 
 
 def test_cluster_similarity_shape():
+    """juzi_cluster_similarity shape must equal n_factors surviving juzi_keep."""
     adata  = make_adata()
     jz.gp.cluster(adata, min_cluster=1)
     n_kept = adata.uns["juzi_keep"].sum()
@@ -196,6 +202,13 @@ def test_cluster_G_non_negative():
     assert (adata.uns["juzi_cluster_G"] >= 0).all()
 
 
+def test_cluster_names_length_matches_labels():
+    """juzi_cluster_names must have same length as juzi_cluster_labels."""
+    adata = make_adata()
+    jz.gp.cluster(adata, min_cluster=1)
+    assert len(adata.uns["juzi_cluster_names"]) == len(adata.uns["juzi_cluster_labels"])
+
+
 def test_cluster_samples_is_dict():
     adata = make_adata()
     jz.gp.cluster(adata, min_cluster=1)
@@ -215,8 +228,8 @@ def test_cluster_stats_keys():
     jz.gp.cluster(adata, min_cluster=1)
     stats = adata.uns["juzi_cluster_stats"]
     assert "silhouette_score" in stats
-    assert "inner_similarity" in stats
-    assert "outer_similarity" in stats
+    assert "inner_similarity"  in stats
+    assert "outer_similarity"  in stats
 
 
 def test_inner_similarity_geq_outer():
@@ -251,10 +264,9 @@ def test_min_cluster_removes_small_clusters():
     min_cluster = 3
     jz.gp.cluster(adata, threshold=0.3, min_cluster=min_cluster)
     labels = adata.uns["juzi_cluster_labels"]
-    names  = np.array(adata.uns["juzi_names"])[adata.uns["juzi_keep"]]
+    names  = np.array(adata.uns["juzi_cluster_names"])
     for c in np.unique(labels):
-        n_unique_samples = len(np.unique(names[labels == c]))
-        assert n_unique_samples >= min_cluster
+        assert len(np.unique(names[labels == c])) >= min_cluster
 
 
 def test_reorder_largest_cluster_first():
@@ -272,7 +284,6 @@ def test_reorder_false_runs():
 
 
 def test_juzi_keep_updated_by_min_cluster():
-    """juzi_keep_cluster and juzi_keep must reflect min_cluster removal."""
     adata       = make_adata(n_samples=4, seed=0)
     keep_before = adata.uns["juzi_keep"].sum()
     jz.gp.cluster(adata, threshold=0.3, min_cluster=2)
@@ -281,13 +292,12 @@ def test_juzi_keep_updated_by_min_cluster():
 
 
 def test_juzi_keep_cluster_subset_of_juzi_keep():
-    """Anything False in juzi_keep_cluster must also be False in juzi_keep."""
     adata = make_adata(n_samples=6, seed=0)
     jz.gp.cluster(adata, threshold=0.3, min_cluster=2)
     assert not adata.uns["juzi_keep"][~adata.uns["juzi_keep_cluster"]].any()
 
 
-# Relabelling correctness
+# Relabelling
 
 
 def test_cluster_labels_no_gaps():
@@ -297,7 +307,6 @@ def test_cluster_labels_no_gaps():
     unique = np.unique(labels)
     assert unique[0] == 0
     assert unique[-1] == len(unique) - 1
-    assert len(unique) == unique[-1] + 1
 
 
 def test_cluster_labels_count_matches_cluster_G():
@@ -334,26 +343,18 @@ def test_full_pipeline_runs():
     assert "juzi_cluster_labels" in adata.uns
 
 
-def test_full_pipeline_cluster_G_is_centroid():
+def test_full_pipeline_cluster_G_non_negative():
     adata = make_adata_pruned()
     jz.gp.cluster(adata, threshold=0.3, min_cluster=1)
-    keep   = adata.uns["juzi_keep"]
-    labels = adata.uns["juzi_cluster_labels"]
-    for c in np.unique(labels):
-        actual = adata.uns["juzi_cluster_G"][c]
-        assert actual.shape == (adata.n_vars,)
-        assert np.isfinite(actual).all()
-        assert (actual >= 0).all()
+    assert (adata.uns["juzi_cluster_G"] >= 0).all()
+    assert np.isfinite(adata.uns["juzi_cluster_G"]).all()
 
 
 def test_cluster_rerun_does_not_affect_prune_or_similarity():
-    """Confirm upstream masks are stable across multiple cluster runs."""
-    adata = make_adata_pruned()
+    adata           = make_adata_pruned()
     prune_mask      = adata.uns["juzi_keep_prune"].copy()
     similarity_mask = adata.uns["juzi_keep_similarity"].copy()
-
     jz.gp.cluster(adata, threshold=0.1, min_cluster=1)
     jz.gp.cluster(adata, threshold=0.5, min_cluster=2)
-
     np.testing.assert_array_equal(adata.uns["juzi_keep_prune"],      prune_mask)
     np.testing.assert_array_equal(adata.uns["juzi_keep_similarity"], similarity_mask)
