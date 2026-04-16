@@ -178,59 +178,6 @@ def test_upstream_masks_not_modified_by_prune():
     assert adata.uns["juzi_keep_cluster"].all()
 
 
-# Pruning behaviour
-
-
-def test_prune_keeps_all_at_zero_threshold():
-    adata = make_adata(k=[3, 4])
-    jz.gp.nmf_prune(adata, min_k=1, min_similarity=0.0)
-    assert adata.uns["juzi_keep_prune"].all()
-    assert adata.uns["juzi_keep"].all()
-
-
-def test_prune_drops_all_at_impossible_threshold():
-    adata = make_adata(k=[3, 4, 5], init="random", seed=0)
-    jz.gp.nmf_prune(adata, min_k=3, min_similarity=1.0)
-    assert not adata.uns["juzi_keep_prune"].any()
-    assert not adata.uns["juzi_keep"].any()
-
-
-def test_prune_single_k_keeps_all():
-    adata = make_adata(k=[5])
-    jz.gp.nmf_prune(adata, min_k=1, min_similarity=0.5)
-    assert adata.uns["juzi_keep_prune"].all()
-
-
-def test_prune_result_is_subset_of_all_factors():
-    adata = make_adata(k=[3, 4])
-    jz.gp.nmf_prune(adata, min_k=1, min_similarity=0.3)
-    n_factors = adata.varm["juzi_G"].shape[1]
-    assert len(adata.uns["juzi_keep_prune"]) == n_factors
-    assert adata.uns["juzi_keep_prune"].sum() <= n_factors
-
-
-def test_prune_stricter_threshold_keeps_fewer():
-    adata_low = make_adata(k=[3, 4], seed=0)
-    adata_high = make_adata(k=[3, 4], seed=0)
-    jz.gp.nmf_prune(adata_low, min_k=1, min_similarity=0.1)
-    jz.gp.nmf_prune(adata_high, min_k=1, min_similarity=0.9)
-    assert (
-        adata_high.uns["juzi_keep_prune"].sum()
-        <= adata_low.uns["juzi_keep_prune"].sum()
-    )
-
-
-def test_prune_stricter_min_k_keeps_fewer():
-    adata_low = make_adata(k=[3, 4, 5], seed=0)
-    adata_high = make_adata(k=[3, 4, 5], seed=0)
-    jz.gp.nmf_prune(adata_low, min_k=1, min_similarity=0.3)
-    jz.gp.nmf_prune(adata_high, min_k=3, min_similarity=0.3)
-    assert (
-        adata_high.uns["juzi_keep_prune"].sum()
-        <= adata_low.uns["juzi_keep_prune"].sum()
-    )
-
-
 # Matching strategies
 
 
@@ -254,4 +201,132 @@ def test_hungarian_keeps_leq_greedy():
     assert (
         adata_hungarian.uns["juzi_keep_prune"].sum()
         <= adata_greedy.uns["juzi_keep_prune"].sum()
+    )
+
+# Pruning behaviour
+
+
+def test_prune_keeps_all_at_zero_threshold():
+    adata = make_adata(k=[3, 4])
+    jz.gp.nmf_prune(adata, min_k=1, min_similarity=0.0, deduplicate=False)
+    assert adata.uns["juzi_keep_prune"].all()
+    assert adata.uns["juzi_keep"].all()
+
+
+def test_prune_drops_all_at_impossible_threshold():
+    adata = make_adata(k=[3, 4, 5], init="random", seed=0)
+    jz.gp.nmf_prune(adata, min_k=3, min_similarity=1.0, deduplicate=False)
+    assert not adata.uns["juzi_keep_prune"].any()
+    assert not adata.uns["juzi_keep"].any()
+
+
+def test_prune_single_k_keeps_all():
+    adata = make_adata(k=[5])
+    jz.gp.nmf_prune(adata, min_k=1, min_similarity=0.5, deduplicate=False)
+    assert adata.uns["juzi_keep_prune"].all()
+
+
+def test_prune_result_is_subset_of_all_factors():
+    adata = make_adata(k=[3, 4])
+    jz.gp.nmf_prune(adata, min_k=1, min_similarity=0.3, deduplicate=False)
+    n_factors = adata.varm["juzi_G"].shape[1]
+    assert len(adata.uns["juzi_keep_prune"]) == n_factors
+    assert adata.uns["juzi_keep_prune"].sum() <= n_factors
+
+
+def test_prune_stricter_threshold_keeps_fewer():
+    adata_low  = make_adata(k=[3, 4], seed=0)
+    adata_high = make_adata(k=[3, 4], seed=0)
+    jz.gp.nmf_prune(adata_low,  min_k=1, min_similarity=0.1, deduplicate=False)
+    jz.gp.nmf_prune(adata_high, min_k=1, min_similarity=0.9, deduplicate=False)
+    assert adata_high.uns["juzi_keep_prune"].sum() <= adata_low.uns["juzi_keep_prune"].sum()
+
+
+def test_prune_stricter_min_k_keeps_fewer():
+    adata_low  = make_adata(k=[3, 4, 5], seed=0)
+    adata_high = make_adata(k=[3, 4, 5], seed=0)
+    jz.gp.nmf_prune(adata_low,  min_k=1, min_similarity=0.3, deduplicate=False)
+    jz.gp.nmf_prune(adata_high, min_k=3, min_similarity=0.3, deduplicate=False)
+    assert adata_high.uns["juzi_keep_prune"].sum() <= adata_low.uns["juzi_keep_prune"].sum()
+
+
+# Deduplication behaviour
+
+
+def test_dedup_keeps_fewer_than_no_dedup():
+    """Deduplication must remove at least some factors when programs overlap."""
+    adata_dedup    = make_adata(k=[3, 4], seed=0)
+    adata_no_dedup = make_adata(k=[3, 4], seed=0)
+    jz.gp.nmf_prune(adata_dedup,    min_k=1, min_similarity=0.1, deduplicate=True)
+    jz.gp.nmf_prune(adata_no_dedup, min_k=1, min_similarity=0.1, deduplicate=False)
+    assert (
+        adata_dedup.uns["juzi_keep_prune"].sum()
+        <= adata_no_dedup.uns["juzi_keep_prune"].sum()
+    )
+
+
+def test_dedup_false_behaviour_unchanged():
+    """deduplicate=False must produce identical results to the old behaviour."""
+    adata_a = make_adata(k=[3, 4], seed=0)
+    adata_b = make_adata(k=[3, 4], seed=0)
+    jz.gp.nmf_prune(adata_a, min_k=1, min_similarity=0.3,
+                    deduplicate=False, matching="hungarian")
+    jz.gp.nmf_prune(adata_b, min_k=1, min_similarity=0.3,
+                    deduplicate=False, matching="hungarian")
+    np.testing.assert_array_equal(
+        adata_a.uns["juzi_keep_prune"],
+        adata_b.uns["juzi_keep_prune"],
+    )
+
+
+def test_dedup_result_subset_of_recurrence():
+    """Factors kept after deduplication must be a subset of recurrence-kept."""
+    adata_dedup    = make_adata(k=[3, 4], seed=0)
+    adata_no_dedup = make_adata(k=[3, 4], seed=0)
+    jz.gp.nmf_prune(adata_dedup,    min_k=1, min_similarity=0.1, deduplicate=True)
+    jz.gp.nmf_prune(adata_no_dedup, min_k=1, min_similarity=0.1, deduplicate=False)
+    # Every factor kept with dedup must also be kept without dedup
+    dedup_kept    = adata_dedup.uns["juzi_keep_prune"]
+    no_dedup_kept = adata_no_dedup.uns["juzi_keep_prune"]
+    assert not dedup_kept[~no_dedup_kept].any()
+
+
+# Matching strategies
+
+
+def test_greedy_matching_runs():
+    adata = make_adata(k=[3, 4])
+    jz.gp.nmf_prune(adata, matching="greedy", deduplicate=False)
+    assert "juzi_keep_prune" in adata.uns
+
+
+def test_hungarian_matching_runs():
+    adata = make_adata(k=[3, 4])
+    jz.gp.nmf_prune(adata, matching="hungarian", deduplicate=False)
+    assert "juzi_keep_prune" in adata.uns
+
+
+def test_hungarian_keeps_leq_greedy():
+    adata_greedy    = make_adata(k=[3, 4], seed=0)
+    adata_hungarian = make_adata(k=[3, 4], seed=0)
+    jz.gp.nmf_prune(adata_greedy,    min_k=1, min_similarity=0.3,
+                    matching="greedy",    deduplicate=False)
+    jz.gp.nmf_prune(adata_hungarian, min_k=1, min_similarity=0.3,
+                    matching="hungarian", deduplicate=False)
+    assert (
+        adata_hungarian.uns["juzi_keep_prune"].sum()
+        <= adata_greedy.uns["juzi_keep_prune"].sum()
+    )
+
+
+def test_matching_strategies_agree_at_zero_threshold():
+    adata_greedy    = make_adata(k=[3, 4], seed=0)
+    adata_hungarian = make_adata(k=[3, 4], seed=0)
+    jz.gp.nmf_prune(adata_greedy,    min_k=1, min_similarity=0.0,
+                    matching="greedy",    deduplicate=False)
+    jz.gp.nmf_prune(adata_hungarian, min_k=1, min_similarity=0.0,
+                    matching="hungarian", deduplicate=False)
+    np.testing.assert_array_equal(
+        adata_greedy.uns["juzi_keep_prune"],
+        adata_hungarian.uns["juzi_keep_prune"],
     )

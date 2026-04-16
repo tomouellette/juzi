@@ -300,29 +300,32 @@ def _recompute_keep(adata: AnnData) -> None:
     )
 
 
-def _combined_score(G: np.ndarray) -> np.ndarray:
-    """Compute combined loading × specificity score.
+def _combined_score(G: np.ndarray, epsilon: float = 1e-8) -> np.ndarray:
+    """Compute weighted log-ratio score for gene ranking.
 
-    Score = raw loading × (loading / total loading across programs)
-           = G * (G / G.sum(axis=0))
+    Score = G * log(G / mean(G across programs) + epsilon)
 
     High only when a gene is both highly loaded in this program AND
-    relatively specific to it. Near-zero genes score near-zero regardless
-    of their specificity ratio. G has shape (n_programs × n_genes).
+    exclusive to it relative to other programs. Genes that load broadly
+    across all programs score near zero due to the log term approaching
+    zero. Genes with near-zero absolute loading score near zero due to
+    the G weight regardless of their log-ratio.
 
     Parameters
     ----------
     G : np.ndarray
-        Loading matrix of shape (n_programs × n_genes). Rows are programs,
-        columns are genes.
+        Loading matrix of shape (n_programs × n_genes).
+    epsilon : float
+        Pseudocount added before log to handle zero loadings.
 
     Returns
     -------
     np.ndarray
-        Combined score matrix of same shape as G.
+        Weighted log-ratio score matrix of same shape as G.
     """
-    total = G.sum(axis=0, keepdims=True) + 1e-8
-    return G * (G / total)
+    mean_loading = G.mean(axis=0, keepdims=True) + epsilon
+    scores = G * np.log(G / mean_loading + epsilon)
+    return np.maximum(scores, 0.0)
 
 
 def _nmf(

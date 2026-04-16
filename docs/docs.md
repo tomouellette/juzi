@@ -77,17 +77,24 @@ print(adata.obs["sample_id"].value_counts())
 
 ## A note on ranking genes
 
-`juzi` by default ranks genes using a combined score determined by multiplying raw loadings by a specificity score:
+`juzi` ranks genes using a weighted log-ratio score that rewards both high
+absolute loading and program exclusivity:
 
 ```
-G = raw loadings matrix (genes × factors)
-combined = G * (G / G.sum(axis=0))
+G = raw loadings matrix (n_programs × n_genes)
+score = G * log(G / mean(G across programs) + e)
+score = max(score, 0)   # anti-markers clipped to zero
 ```
 
-This is high only when a gene is both highly loaded in a given program AND relatively specific to it.
-Broadly expressed genes score near zero even if their absolute loading is high.
-This can be turned off to use raw loadings by setting `use_combined=False` in
-`nmf_prune`, `similarity_compute`, `score_cells`, `programs_annotate`, `programs_genes`, `programs_compare`, and `programs_loadings`.
+The log term is positive when a gene loads more in this program than its
+average across all programs (it measures exclusivity). The G weight ensures
+near-zero genes contribute nothing regardless of their log-ratio. Together
+they select genes that are both highly expressed in the program and not
+shared with other programs.
+
+Set `use_combined=False` in `nmf_prune`, `similarity_compute`, `score_cells`,
+`programs_annotate`, `programs_genes`, `programs_compare`, and
+`programs_loadings` to fall back to raw loading magnitude.
 
 ---
 
@@ -123,7 +130,18 @@ adata = jz.gp.nmf_fit(
 
 ## Step 2 — Prune
 
-Remove non-recurrent factors within each sample. A factor is recurrent if it shares sufficient top-gene overlap with at least `min_k` other resolutions. Gene ranking uses the combined score by default.
+Remove non-recurrent and redundant factors within each sample. Two sequential
+filters are applied:
+
+**Recurrence filter** — a factor is kept if it shares sufficient top-gene
+overlap (Jaccard >= `min_similarity`) with at least one factor from each of
+`min_k` other resolutions. Non-recurrent factors are masked before
+cross-sample similarity is computed.
+
+**Deduplication filter** — among factors that passed recurrence, any two
+factors from the same sample with Jaccard >= `min_similarity` are considered
+redundant. The most central factor per redundant group (highest mean Jaccard
+to all other members) is retained.
 
 ```python
 jz.gp.nmf_prune(
@@ -131,14 +149,15 @@ jz.gp.nmf_prune(
     top_k=50,
     min_similarity=0.1,
     min_k=1,
-    matching="greedy",     # "greedy" or "hungarian"
+    matching="hungarian",  # or, "greedy"
+    deduplicate=True,      # remove within-sample redundant factors
     use_combined=True,
 )
 ```
 
 | Field | Location | Description |
 |---|---|---|
-| `juzi_keep_prune` | `.uns` | Boolean mask of recurrent factors |
+| `juzi_keep_prune` | `.uns` | Boolean mask of recurrent non-redundant factors |
 | `juzi_keep` | `.uns` | Recomputed intersection |
 
 ---

@@ -72,14 +72,12 @@ def similarity_compute(
     # Validate
 
     for field, store in [
-        ("juzi_G",     "varm"),
-        ("juzi_k",     "uns"),
+        ("juzi_G", "varm"),
+        ("juzi_k", "uns"),
         ("juzi_names", "uns"),
     ]:
         if field not in getattr(adata, store):
-            raise KeyError(
-                f"'{field}' not found in .{store}. Run juzi.gp.nmf first."
-            )
+            raise KeyError(f"'{field}' not found in .{store}. Run juzi.gp.nmf first.")
 
     if distance != "jaccard" and not callable(distance):
         raise ValueError("distance must be 'jaccard' or a callable.")
@@ -95,15 +93,18 @@ def similarity_compute(
 
     # Subset to kept factors
 
-    n_total   = adata.varm["juzi_G"].shape[1]
-    keep      = adata.uns["juzi_keep"] if "juzi_keep" in adata.uns \
-                else np.ones(n_total, dtype=bool)
-    sim_idx   = np.where(keep)[0]
-    G_all     = adata.varm["juzi_G"].T # (n_total × n_genes)
-    G         = G_all[sim_idx] # (n_kept × n_genes)
+    n_total = adata.varm["juzi_G"].shape[1]
+    keep = (
+        adata.uns["juzi_keep"]
+        if "juzi_keep" in adata.uns
+        else np.ones(n_total, dtype=bool)
+    )
+    sim_idx = np.where(keep)[0]
+    G_all = adata.varm["juzi_G"].T  # (n_total × n_genes)
+    G = G_all[sim_idx]  # (n_kept × n_genes)
     names_all = np.array(adata.uns["juzi_names"])
-    names     = names_all[sim_idx]
-    n         = G.shape[0]
+    names = names_all[sim_idx]
+    n = G.shape[0]
 
     # Compute gene ranking scores
 
@@ -144,7 +145,7 @@ def similarity_compute(
         sim[i, j] = s_xy
         sim[j, i] = s_xy
 
-    adata.uns["juzi_similarity"]     = sim
+    adata.uns["juzi_similarity"] = sim
     adata.uns["juzi_similarity_idx"] = sim_idx
 
     # Update juzi_keep_similarity
@@ -152,12 +153,14 @@ def similarity_compute(
     keep_sim = np.zeros(n_total, dtype=bool)
 
     if drop_zeros:
-        local_pass              = ~np.isclose(sim, 0).all(axis=1)
+        local_pass = ~np.isclose(sim, 0).all(axis=1)
         keep_sim[sim_idx[local_pass]] = True
     else:
-        keep_sim[sim_idx]       = True
+        keep_sim[sim_idx] = True
 
     adata.uns["juzi_keep_similarity"] = keep_sim
+    adata.uns["juzi_similarity_intra"] = intra_sample
+
     _recompute_keep(adata)
 
     return adata if copy else None
@@ -196,23 +199,22 @@ def similarity_filter(
     for field in ["juzi_similarity", "juzi_similarity_idx"]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. "
-                "Run juzi.gp.similarity_compute first."
+                f"'{field}' not found in .uns. " "Run juzi.gp.similarity_compute first."
             )
 
     if not 0.0 <= min_similarity <= 1.0:
         raise ValueError("min_similarity must be in [0, 1].")
 
-    sim      = adata.uns["juzi_similarity"]
-    sim_idx  = adata.uns["juzi_similarity_idx"]
-    n_total  = adata.varm["juzi_G"].shape[1]
+    sim = adata.uns["juzi_similarity"]
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    n_total = adata.varm["juzi_G"].shape[1]
 
     keep_sim = adata.uns.get(
         "juzi_keep_similarity",
         np.zeros(n_total, dtype=bool),
     ).copy()
 
-    local_max  = sim.max(axis=1)
+    local_max = sim.max(axis=1)
     local_pass = local_max >= min_similarity
 
     keep_sim[sim_idx] = False
@@ -250,15 +252,15 @@ def _compute_similarity(
     distance: str | Callable,
 ) -> tuple[int, int, float]:
     """Compute similarity between two factor loading vectors."""
-    x, y           = G[i], G[j]
+    x, y = G[i], G[j]
     x_score, y_score = G_score[i], G_score[j]
 
     if np.sum(x) == 0 or np.sum(y) == 0:
         return (i, j, 0.0)
 
     if distance == "jaccard":
-        top_x = np.argsort(x_score)[-int(top_k):]
-        top_y = np.argsort(y_score)[-int(top_k):]
+        top_x = np.argsort(x_score)[-int(top_k) :]
+        top_y = np.argsort(y_score)[-int(top_k) :]
         union = np.union1d(top_x, top_y)
         if len(union) == 0:
             return (i, j, 0.0)
@@ -266,8 +268,8 @@ def _compute_similarity(
     else:
         if top_k is not None:
             union = np.union1d(
-                np.argsort(x_score)[-int(top_k):],
-                np.argsort(y_score)[-int(top_k):],
+                np.argsort(x_score)[-int(top_k) :],
+                np.argsort(y_score)[-int(top_k) :],
             )
             x, y = x[union], y[union]
         s_xy = float(distance(x, y))

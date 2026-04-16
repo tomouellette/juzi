@@ -29,11 +29,9 @@ def programs_cluster(
     procedure repeats until all remaining clusters meet the minimum sample
     requirement.
 
-    Factors removed by min_cluster are tracked in juzi_keep_cluster
-    (length n_total). juzi_keep is recomputed as the intersection of
-    juzi_keep_prune, juzi_keep_similarity, and juzi_keep_cluster.
-    Re-running programs_cluster only resets juzi_keep_cluster — upstream
-    masks are never modified.
+    When similarity_compute was run with intra_sample=False, within-sample
+    pairs are excluded from the inter-cluster mean similarity computation.
+    This prevents the zero entries from artificially suppressing merges.
 
     Parameters
     ----------
@@ -42,23 +40,14 @@ def programs_cluster(
         juzi.gp.similarity_compute.
     threshold : float
         Merge clusters until maximum inter-cluster similarity falls below
-        this value. Higher values produce more clusters. Must be in [0, 1].
+        this value. Must be in [0, 1].
     min_cluster : int
-        Minimum number of unique samples that must contribute factors to
-        a cluster for it to be retained. Must be >= 1.
+        Minimum number of unique samples per cluster. Must be >= 1.
     method : str
-        Linkage method for hierarchical clustering. One of:
-            "average"  — mean distance between all pairs across clusters.
-                         Valid for any distance metric. Default.
-            "complete" — maximum distance between clusters. Tends to
-                         produce more compact, equally-sized clusters.
-            "ward"     — minimises within-cluster variance. Requires
-                         Euclidean distances — 1-Jaccard is not strictly
-                         Euclidean so this is an approximation, but often
-                         works well in practice. A warning is raised.
+        Linkage method. One of "average", "complete", "ward".
     reorder : bool
-        If True, clusters are sorted by size (largest first) and factors
-        within each cluster are sorted by internal similarity.
+        If True, sort clusters by size and factors within each cluster
+        by internal similarity.
     copy : bool
         If True, return a modified copy. If False, modify in place.
 
@@ -67,12 +56,12 @@ def programs_cluster(
     AnnData | None
         AnnData with the following fields populated:
             .uns["juzi_keep_cluster"]       : boolean mask length n_total
-            .uns["juzi_keep"]               : intersection of all three stage masks
+            .uns["juzi_keep"]               : intersection of all three masks
             .uns["juzi_cluster_similarity"] : reordered factor similarity matrix
             .uns["juzi_cluster_labels"]     : cluster label per retained factor
-            .uns["juzi_cluster_names"]      : donor name per retained factor
+            .uns["juzi_cluster_names"]      : sample name per retained factor
             .uns["juzi_cluster_G"]          : centroid gene loading per cluster
-            .uns["juzi_cluster_samples"]    : unique sample names per cluster
+            .uns["juzi_cluster_samples"]    : unique contributing samples per cluster
             .uns["juzi_cluster_stats"]      : silhouette, inner/outer similarity
     """
     adata = adata.copy() if copy else adata
@@ -104,10 +93,16 @@ def programs_cluster(
         warnings.warn(
             "method='ward' requires Euclidean distances. 1 - Jaccard similarity "
             "is not strictly Euclidean — Ward linkage is an approximation in "
-            "this setting. Results may be suboptimal. Consider method='average'.",
+            "this setting. Consider method='average'.",
             UserWarning,
             stacklevel=2,
         )
+
+    # Detect intra-sample exclusion
+    # If similarity_compute was run with intra_sample=False, within-sample
+    # pairs are zero in the matrix. Exclude them from merge criterion.
+
+    exclude_intra = not adata.uns.get("juzi_similarity_intra", True)
 
     # Initialise juzi_keep_cluster
 
@@ -137,15 +132,17 @@ def programs_cluster(
                 "Lower min_similarity or min_cluster thresholds."
             )
 
-        Z = sp.cluster.hierarchy.linkage(1.0 - S, method=method)
-
+        Z          = sp.cluster.hierarchy.linkage(1.0 - S, method=method)
         leaf_order = sp.cluster.hierarchy.leaves_list(Z)
         clusters   = np.empty(n, dtype=int)
         for new_label, position in enumerate(leaf_order):
             clusters[position] = new_label
 
         while True:
-            max_pair = _find_max_similar(S, clusters, threshold)
+            max_pair = _find_max_similar(
+                S, clusters, threshold,
+                names=names if exclude_intra else None,
+            )
             if max_pair is None:
                 break
             i, j = max_pair
@@ -247,13 +244,28 @@ def _find_max_similar(
     S: np.ndarray,
     clusters: np.ndarray,
     threshold: float,
+    names: np.ndarray | None = None,
 ) -> Tuple[int, int] | None:
-    c_unique, first_indices = np.unique(clusters, return_index=True)
-    c_counts                = np.array([np.sum(clusters == c) for c in c_unique])
+    """Find the pair of clusters with the highest mean inter-cluster similarity.
 
-    X         = (clusters[:, None] == c_unique[None, :]).astype(float)
-    sum_sims  = X.T @ S @ X
-    mean_sims = sum_sims / np.outer(c_counts, c_counts)
+    When names is provided, within-sample pairs are excluded from the mean
+    so that zero entries from intra_sample=False do not suppress merges.
+    """
+    c_unique, first_indices = np.unique(clusters, return_index=True)
+
+    X = (clusters[:, None] == c_unique[None, :]).astype(float)
+
+    if names is not None:
+        cross_mask = (names[:, None] != names[None, :]).astype(float)
+        sum_sims   = X.T @ (S * cross_mask) @ X
+        sum_valid  = X.T @ cross_mask @ X
+        mean_sims = np.zeros_like(sum_sims)
+        np.divide(sum_sims, sum_valid, out=mean_sims, where=sum_valid > 0)
+    else:
+        c_counts  = np.array([np.sum(clusters == c) for c in c_unique])
+        sum_sims  = X.T @ S @ X
+        mean_sims = sum_sims / np.outer(c_counts, c_counts)
+
     np.fill_diagonal(mean_sims, -np.inf)
 
     best_idx       = int(np.argmax(mean_sims))
@@ -272,22 +284,7 @@ def _reorder_clusters(
     method: str = "average",
 ) -> np.ndarray:
     """Reorder factors so clusters are sorted by size and internally
-    by similarity using the same linkage method as the main clustering.
-
-    Parameters
-    ----------
-    S : np.ndarray
-        Symmetric similarity matrix, shape (n_factors × n_factors).
-    clusters : np.ndarray
-        Cluster label per factor.
-    method : str
-        Linkage method — passed through from programs_cluster.
-
-    Returns
-    -------
-    np.ndarray
-        Reordered factor indices.
-    """
+    by similarity using the same linkage method as the main clustering."""
     c_unique = np.unique(clusters)
     c_sizes  = {c: np.sum(clusters == c) for c in c_unique}
     c_sorted = sorted(c_unique, key=lambda c: c_sizes[c], reverse=True)
@@ -314,32 +311,35 @@ def _cluster_at_threshold(
     threshold: float,
     min_cluster: int,
     method: str = "average",
+    exclude_intra: bool = False,
 ) -> np.ndarray | None:
     """Run iterative clustering at a single threshold value.
 
-    Modifies cluster_mask in place — caller should pass a copy and read
-    the final state after return to correctly subset S.
+    Modifies cluster_mask in place — caller should pass a copy.
 
     Parameters
     ----------
     S_full : np.ndarray
         Full (n_kept × n_kept) similarity matrix.
     names : np.ndarray
-        Donor name per factor in S_full row order.
+        Sample name per factor in S_full row order.
     cluster_mask : np.ndarray
         Local boolean mask of active factors. Modified in place.
     threshold : float
         Similarity threshold for merging.
     min_cluster : int
-        Minimum unique donors per cluster.
+        Minimum unique samples per cluster.
     method : str
-        Linkage method for hierarchical clustering.
+        Linkage method.
+    exclude_intra : bool
+        If True, exclude within-sample pairs from inter-cluster mean
+        similarity computation. Should be True when similarity_compute
+        was run with intra_sample=False.
 
     Returns
     -------
     np.ndarray | None
-        Cluster label per active factor after removal, or None if no
-        valid partition found.
+        Cluster label per active factor after removal, or None.
     """
     max_iter = 100
     for _ in range(max_iter):
@@ -357,17 +357,14 @@ def _cluster_at_threshold(
             clusters[position] = new_label
 
         for _ in range(n * n):
-            c_unique, first_indices = np.unique(clusters, return_index=True)
-            c_counts  = np.array([np.sum(clusters == c) for c in c_unique])
-            X         = (clusters[:, None] == c_unique[None, :]).astype(float)
-            sum_sims  = X.T @ S @ X
-            mean_sims = sum_sims / np.outer(c_counts, c_counts)
-            np.fill_diagonal(mean_sims, -np.inf)
-            best_idx  = int(np.argmax(mean_sims))
-            if float(mean_sims.flat[best_idx]) <= threshold:
+            max_pair = _find_max_similar(
+                S, clusters, threshold,
+                names=names_active if exclude_intra else None,
+            )
+            if max_pair is None:
                 break
-            gi, gj    = np.unravel_index(best_idx, mean_sims.shape)
-            clusters[clusters == c_unique[gj]] = c_unique[gi]
+            i, j = max_pair
+            clusters[clusters == clusters[j]] = clusters[i]
 
         unique_clusters = np.unique(clusters)
         sample_counts   = np.array([
@@ -401,30 +398,26 @@ def programs_threshold(
 ) -> float:
     """Select the optimal clustering threshold by maximising cluster contrast.
 
-    Sweeps across a grid of threshold values, fits clustering at each,
-    and computes a contrast metric between inner-cluster and outer-cluster
-    similarity. The optimal threshold is the one that maximises the metric.
-    All local maxima are stored — each represents a valid partition at a
-    different resolution.
+    Sweeps across threshold values, fits clustering at each, and computes
+    a contrast metric between inner and outer cluster similarity. All local
+    maxima are stored alongside the global optimum.
+
+    When similarity_compute was run with intra_sample=False, within-sample
+    pairs are excluded from the inter-cluster mean similarity computation
+    at each threshold evaluation.
 
     Parameters
     ----------
     adata : AnnData
         AnnData object with juzi_similarity and juzi_similarity_idx in .uns.
     thresholds : np.ndarray | None
-        Grid of threshold values to evaluate. If None, uses
-        np.linspace(0.0, 1.0, 50).
+        Grid of threshold values. If None, uses np.linspace(0.0, 1.0, 50).
     min_cluster : int
-        Minimum number of unique samples per cluster. Must match the
-        value used in programs_cluster.
+        Minimum unique samples per cluster.
     method : str
-        Linkage method. Must match the value used in programs_cluster.
-        One of "average", "complete", "ward".
+        Linkage method. One of "average", "complete", "ward".
     metric : str
-        Contrast metric to maximise. One of:
-            "ratio"      — inner_sim / outer_sim.
-            "delta"      — inner_sim - outer_sim.
-            "silhouette" — mean silhouette score across all factors.
+        Contrast metric. One of "ratio", "delta", "silhouette".
     copy : bool
         If True, return a modified copy. If False, modify in place.
     silent : bool
@@ -433,15 +426,7 @@ def programs_threshold(
     Returns
     -------
     float
-        The optimal threshold value. Stores in .uns["juzi_threshold_sweep"]:
-            "thresholds"         : array of evaluated thresholds
-            "metric"             : metric values per threshold
-            "metric_name"        : name of the metric used
-            "optimal"            : optimal threshold value
-            "local_maxima"       : all local maxima thresholds
-            "local_maxima_values": metric values at local maxima
-            "min_cluster"        : min_cluster value used
-            "method"             : linkage method used
+        Optimal threshold. Stores results in .uns["juzi_threshold_sweep"].
     """
     adata = adata.copy() if copy else adata
 
@@ -468,17 +453,18 @@ def programs_threshold(
 
     # Setup
 
-    sim_idx     = adata.uns["juzi_similarity_idx"]
-    full_names  = np.array(adata.uns["juzi_names"])
-    global_keep = adata.uns["juzi_keep"] \
-                  if "juzi_keep" in adata.uns \
-                  else np.ones(len(full_names), dtype=bool)
+    exclude_intra     = not adata.uns.get("juzi_similarity_intra", True)
+    sim_idx           = adata.uns["juzi_similarity_idx"]
+    full_names        = np.array(adata.uns["juzi_names"])
+    global_keep       = adata.uns["juzi_keep"] \
+                        if "juzi_keep" in adata.uns \
+                        else np.ones(len(full_names), dtype=bool)
 
     base_cluster_mask = global_keep[sim_idx].copy()
     S_full            = adata.uns["juzi_similarity"]
     names             = full_names[sim_idx]
 
-    # Sweep thresholds
+    # Sweep
 
     metric_values = np.full(len(thresholds), np.nan)
 
@@ -495,6 +481,7 @@ def programs_threshold(
                 threshold=threshold,
                 min_cluster=min_cluster,
                 method=method,
+                exclude_intra=exclude_intra,
             )
         except ValueError:
             continue
@@ -541,10 +528,10 @@ def programs_threshold(
             "Lower min_cluster or widen the threshold range."
         )
 
-    finite_metric = np.where(np.isnan(metric_values), -np.inf, metric_values)
-
+    import warnings
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="invalid value encountered")
+        finite_metric = np.where(np.isnan(metric_values), -np.inf, metric_values)
         sign_changes  = np.diff(np.sign(np.diff(finite_metric)))
 
     local_max_idx = (sign_changes < 0).nonzero()[0] + 1
@@ -564,7 +551,7 @@ def programs_threshold(
         local_max_thresholds = np.array([optimal])
         local_max_values     = np.array([metric_values[optimal_full_idx]])
 
-    # Store results
+    # Store
 
     adata.uns["juzi_threshold_sweep"] = {
         "thresholds":          thresholds,
@@ -607,13 +594,7 @@ def programs_merge(
     Returns
     -------
     AnnData | None
-        AnnData with the following fields updated:
-            .uns["juzi_cluster_similarity"] : reordered similarity matrix
-            .uns["juzi_cluster_labels"]     : updated and reordered labels
-            .uns["juzi_cluster_names"]      : reordered donor names per factor
-            .uns["juzi_cluster_G"]          : updated centroid loadings
-            .uns["juzi_cluster_samples"]    : updated contributing donors
-            .uns["juzi_cluster_stats"]      : updated inner/outer/silhouette
+        AnnData with cluster fields updated and juzi_jackknife dropped.
     """
     adata = adata.copy() if copy else adata
 
@@ -636,8 +617,6 @@ def programs_merge(
     labels   = adata.uns["juzi_cluster_labels"].copy()
     unique_C = set(np.unique(labels).tolist())
 
-    # Normalise input
-
     if len(clusters) == 0:
         raise ValueError("clusters must be a non-empty list.")
 
@@ -646,20 +625,17 @@ def programs_merge(
     else:
         merge_groups = [list(g) for g in clusters]
 
-    # Validate
-
     all_mentioned = []
     for group in merge_groups:
         if len(group) < 2:
             raise ValueError(
-                f"Each merge group must contain at least 2 cluster labels. "
-                f"Got: {group}"
+                f"Each merge group must contain at least 2 labels. Got: {group}"
             )
         for c in group:
             if int(c) not in unique_C:
                 raise ValueError(
-                    f"Cluster label {c} not found in juzi_cluster_labels. "
-                    f"Available labels: {sorted(unique_C)}"
+                    f"Cluster label {c} not found. "
+                    f"Available: {sorted(unique_C)}"
                 )
             all_mentioned.append(int(c))
 
@@ -698,43 +674,42 @@ def programs_merge(
         remapped[labels == old_label] = new_label
     labels = remapped
 
-    # Centroid gene loadings
+    # Recompute centroids and stats
 
     unique_clusters = np.unique(labels)
     cluster_G       = np.array([
         G_masked[labels == c].mean(axis=0)
         for c in unique_clusters
     ])
-
-    # Per-cluster sample lists
-
     cluster_samples = {
         int(c): np.unique(names[labels == c]).tolist()
         for c in unique_clusters
     }
 
-    # Cluster quality statistics
-
     inner_mask = labels[:, None] == labels[None, :]
     outer_mask = ~inner_mask
-
     inner_sim  = float(S[inner_mask].mean()) if inner_mask.any() else 0.0
     outer_sim  = float(S[outer_mask].mean()) if outer_mask.any() else 0.0
 
-    sil_score   = None
-    nc          = len(unique_clusters)
-    dist_matrix = 1.0 - S
+    sil_score_val = None
+    nc            = len(unique_clusters)
+    dist_matrix   = 1.0 - S
     np.fill_diagonal(dist_matrix, 0.0)
 
     if nc > 1 and nc < S.shape[0] - 1:
         try:
-            sil_score = float(silhouette_score(
+            sil_score_val = float(silhouette_score(
                 dist_matrix, labels, metric="precomputed"
             ))
         except Exception:
             pass
 
-    # Store results
+    # Drop jackknife
+
+    if "juzi_jackknife" in adata.uns:
+        del adata.uns["juzi_jackknife"]
+
+    # Store
 
     adata.uns["juzi_cluster_similarity"] = S
     adata.uns["juzi_cluster_labels"]     = labels
@@ -742,7 +717,7 @@ def programs_merge(
     adata.uns["juzi_cluster_G"]          = cluster_G
     adata.uns["juzi_cluster_samples"]    = cluster_samples
     adata.uns["juzi_cluster_stats"]      = {
-        "silhouette_score": sil_score,
+        "silhouette_score": sil_score_val,
         "inner_similarity":  inner_sim,
         "outer_similarity":  outer_sim,
     }
