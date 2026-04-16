@@ -26,6 +26,7 @@ def nmf_fit(
     normalize: bool = True,
     log1p: bool = True,
     clip_quantile: float = 0.999,
+    center: bool = True,
     solver: str = "cd",
     loss: str = "frobenius",
     init: str = "nndsvda",
@@ -78,6 +79,8 @@ def nmf_fit(
         If True, normalise counts to target_sum before log transformation.
     log1p : bool
         If True, apply log1p transformation after normalisation.
+    center : bool
+        If True, center each gene to zero mean after log transformation.
     clip_quantile : float
         Upper quantile at which to clip expression values after
         preprocessing. Reduces the influence of extreme outlier cells.
@@ -227,6 +230,7 @@ def nmf_fit(
                 target_sum=target_sum,
                 normalize=normalize,
                 log1p=log1p,
+                center=center,
                 clip_quantile=clip_quantile,
                 solver=solver,
                 loss=loss,
@@ -334,6 +338,7 @@ def _nmf(
     target_sum: float,
     normalize: bool,
     log1p: bool,
+    center: bool,
     clip_quantile: float,
     solver: str,
     loss: str,
@@ -360,9 +365,15 @@ def _nmf(
 
     if log1p:
         X = np.log1p(X)
-
+ 
     q = np.quantile(X, clip_quantile)
     X = np.clip(X, 0, q)
+
+    if center:
+        gene_means = X.mean(axis=0, keepdims=True)
+        X = X - gene_means
+        X = np.maximum(X, 0.0)
+
 
     H_list, W_list = [], []
 
