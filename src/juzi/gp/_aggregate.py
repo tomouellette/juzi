@@ -8,7 +8,7 @@ from anndata import AnnData
 from typing import List
 
 
-def aggregate(
+def score_aggregate(
     adata: AnnData,
     key: str,
     obs_cols: List[str] | None = None,

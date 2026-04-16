@@ -9,7 +9,7 @@ from anndata import AnnData
 from typing import Dict, List, Tuple
 
 
-def associate(
+def score_associate(
     adata: AnnData,
     figsize: Tuple[float, float] | None = None,
     palette: Dict[int, str] | None = None,

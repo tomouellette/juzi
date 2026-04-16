@@ -35,9 +35,11 @@ def make_adata(
         var={"gene_name": np.arange(n_genes).astype(str)},
     )
 
-    adata = jz.gp.nmf(adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed)
-    jz.gp.similarity(adata, distance="jaccard", top_k=20)
-    jz.gp.cluster(adata, threshold=0.3, min_cluster=1)
+    adata = jz.gp.nmf_fit(
+        adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed
+    )
+    jz.gp.similarity_compute(adata, distance="jaccard", top_k=20)
+    jz.gp.programs_cluster(adata, threshold=0.3, min_cluster=1)
 
     return adata
 
@@ -125,14 +127,14 @@ class TestProgramGenes:
         for genes in result.values():
             assert len(genes) == len(set(genes))
 
-    def test_specificity_true_differs_from_false(self):
+    def test_combined_true_differs_from_false(self):
         adata_spec = make_adata(seed=0)
         adata_raw = make_adata(seed=0)
         result_spec = jz.ut.program_genes(
-            adata_spec, n_top_genes=10, use_specificity=True
+            adata_spec, n_top_genes=10, use_combined=True
         )
         result_raw = jz.ut.program_genes(
-            adata_raw, n_top_genes=10, use_specificity=False
+            adata_raw, n_top_genes=10, use_combined=False
         )
         any_differ = any(set(result_spec[p]) != set(result_raw[p]) for p in result_spec)
         assert any_differ

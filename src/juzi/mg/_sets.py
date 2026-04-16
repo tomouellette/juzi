@@ -25,10 +25,10 @@ def _make_gene_set_class(class_name: str, resource: str, docstring: str):
 
     The JSON must be a flat {gene_set_name: [gene, ...]} dictionary.
     Each key becomes an attribute on the class, accessible as:
-        obj.GENE_SET_NAME  →  List[str]
-        obj.as_dict()      →  Dict[str, List[str]]
-        obj.all()          →  List[str] (all genes merged)
-        obj.info()         →  List[str] (gene set names)
+        obj.GENE_SET_NAME  to  List[str]
+        obj.as_dict()      to  Dict[str, List[str]]
+        obj.all()          to  List[str] (all genes merged)
+        obj.info()         to  List[str] (gene set names)
     """
 
     class GeneSetCollection:

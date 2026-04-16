@@ -18,7 +18,7 @@ except ImportError:
     )
 
 
-def associate(
+def score_associate(
     adata: AnnData,
     formula: str,
     method: str = "lbfgs",

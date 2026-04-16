@@ -9,7 +9,7 @@ from anndata import AnnData
 from typing import Tuple
 
 
-def score(
+def score_embedding(
     adata: AnnData,
     basis: str = "X_umap",
     figsize: Tuple[float, float] | None = None,

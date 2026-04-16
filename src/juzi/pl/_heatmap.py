@@ -10,7 +10,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from typing import Dict, Tuple, List
 
 
-def heatmap(
+def programs_heatmap(
     adata: AnnData,
     figsize: Tuple[float, float] = (6.0, 6.0),
     ax: plt.Axes | None = None,

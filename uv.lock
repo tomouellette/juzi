@@ -315,7 +315,7 @@ wheels = [
 
 [[package]]
 name = "juzi"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "." }
 dependencies = [
     { name = "anndata" },
@@ -323,6 +323,7 @@ dependencies = [
     { name = "joblib" },
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "scikit-learn" },
     { name = "scipy" },
     { name = "statsmodels" },
     { name = "tqdm" },
@@ -336,6 +337,7 @@ requires-dist = [
     { name = "juzi", editable = "." },
     { name = "matplotlib" },
     { name = "numpy", specifier = ">=2.2" },
+    { name = "scikit-learn" },
     { name = "scipy", specifier = ">=1.16.1" },
     { name = "statsmodels" },
     { name = "tqdm", specifier = ">=4.67.1" },

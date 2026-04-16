@@ -10,11 +10,11 @@ from statsmodels.stats.multitest import multipletests
 from typing import Dict, List
 
 
-def annotate(
+def programs_annotate(
     adata: AnnData,
     gene_sets: Dict[str, List[str]] | object,
     n_top_genes: int = 50,
-    use_specificity: bool = True,
+    use_combined: bool = True,
     padj_method: str = "fdr_bh",
     copy: bool = False,
 ) -> AnnData | None:
@@ -42,7 +42,7 @@ def annotate(
             - Output of jz.mg.read_msigdb()
     n_top_genes : int
         Number of top genes per program to use for overlap computation.
-    use_specificity : bool
+    use_combined : bool
         If True, rank genes by specificity score (loading in this program
         divided by total loading across all programs). If False, rank by
         raw loading magnitude.
@@ -117,7 +117,7 @@ def annotate(
 
     # Gene ranking
 
-    if use_specificity:
+    if use_combined:
         total = G.sum(axis=0, keepdims=True) + 1e-8
         G_rank = G / total
     else:

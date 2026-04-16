@@ -9,15 +9,16 @@ from scipy.optimize import linear_sum_assignment
 from typing import List
 from tqdm import tqdm
 
-from ._nmf import _recompute_keep
+from ._nmf import _recompute_keep, _combined_score
 
 
-def prune(
+def nmf_prune(
     adata: AnnData,
     top_k: int = 50,
     min_similarity: float = 0.7,
     min_k: int = 1,
     matching: str = "greedy",
+    use_combined: bool = True,
     n_jobs: int = 1,
     prefer: str | None = None,
     silent: bool = False,
@@ -33,7 +34,7 @@ def prune(
     Parameters
     ----------
     adata : AnnData
-        AnnData object fit with juzi.gp.nmf. Must contain juzi_G in .varm
+        AnnData object fit with juzi.gp.nmf_fit. Must contain juzi_G in .varm
         and juzi_k, juzi_names in .uns.
     top_k : int
         Number of top-loaded genes used to compute Jaccard similarity
@@ -48,10 +49,13 @@ def prune(
         Strategy for matching factors across resolutions. "greedy" takes
         the best available match for each factor independently. "hungarian"
         finds the globally optimal one-to-one assignment between resolutions
-        via the Hungarian algorithm, preventing two factors from the same
-        resolution competing for the same match. Difference is negligible
-        for typical k ranges (5-15) but "hungarian" is more correct when
-        factors within a resolution are similar to each other.
+        via the Hungarian algorithm.
+    use_combined : bool
+        If True, rank genes by combined loading × specificity score
+        (G * G / G.sum(axis=0)) before selecting top_k genes for Jaccard
+        computation. Downweights genes that load broadly across all factors
+        within a donor, making within-donor matching more discriminative.
+        If False, rank by raw loading magnitude.
     n_jobs : int
         Number of parallel workers for pruning across samples.
     prefer : str | None
@@ -73,16 +77,19 @@ def prune(
     # Validate
 
     for field, store in [
-        ("juzi_G", "varm"),
-        ("juzi_k", "uns"),
+        ("juzi_G",     "varm"),
+        ("juzi_k",     "uns"),
         ("juzi_names", "uns"),
     ]:
         if field not in getattr(adata, store):
-            raise KeyError(f"'{field}' not found in .{store}. Run juzi.gp.nmf first.")
+            raise KeyError(
+                f"'{field}' not found in .{store}. Run juzi.gp.nmf_fit first."
+            )
 
     if top_k > adata.n_vars:
         raise ValueError(
-            f"top_k={top_k} exceeds number of genes ({adata.n_vars}). " "Lower top_k."
+            f"top_k={top_k} exceeds number of genes ({adata.n_vars}). "
+            "Lower top_k."
         )
 
     if not 0.0 <= min_similarity <= 1.0:
@@ -100,17 +107,17 @@ def prune(
 
     # Split juzi_G into per-sample factor blocks
 
-    names = np.array(adata.uns["juzi_names"])
-    G = adata.varm["juzi_G"].T  # (n_total_factors × n_genes)
-    k_list = adata.uns["juzi_k"]
-    n_comps = int(np.sum(k_list))
+    names    = np.array(adata.uns["juzi_names"])
+    G        = adata.varm["juzi_G"].T # (n_total_factors × n_genes)
+    k_list   = adata.uns["juzi_k"]
+    n_comps  = int(np.sum(k_list))
     n_unique = len(np.unique(names))
 
     if len(names) != n_unique * n_comps:
         raise ValueError(
             f"juzi_names length ({len(names)}) does not match "
             f"n_samples ({n_unique}) × sum(k) ({n_comps}). "
-            "juzi_G may be corrupted — re-run juzi.gp.nmf."
+            "juzi_G may be corrupted — re-run juzi.gp.nmf_fit."
         )
 
     split_points = np.arange(n_comps, n_unique * n_comps, n_comps)
@@ -126,6 +133,7 @@ def prune(
             min_similarity=min_similarity,
             min_k=min_k,
             matching=matching,
+            use_combined=use_combined,
         )
         for sample_G in tqdm(
             per_sample_G,
@@ -136,12 +144,12 @@ def prune(
 
     # Build global boolean keep mask
 
-    mask = np.zeros(len(names), dtype=bool)
+    mask               = np.zeros(len(names), dtype=bool)
     cumulative_offsets = np.arange(n_unique) * n_comps
 
     for sample_idx, local_keep_idx in enumerate(results):
         if len(local_keep_idx) > 0:
-            global_idx = cumulative_offsets[sample_idx] + local_keep_idx
+            global_idx       = cumulative_offsets[sample_idx] + local_keep_idx
             mask[global_idx] = True
 
     # Update stage mask and recompute juzi_keep
@@ -153,7 +161,6 @@ def prune(
 
 
 def _jaccard(set1: set, set2: set) -> float:
-    """Jaccard similarity between two sets."""
     union = set1 | set2
     if len(union) == 0:
         return 0.0
@@ -164,7 +171,6 @@ def _similarity_matrix(
     top_genes_a: list[set],
     top_genes_b: list[set],
 ) -> np.ndarray:
-    """Compute pairwise Jaccard similarity matrix between two sets of factors."""
     sim = np.zeros((len(top_genes_a), len(top_genes_b)))
     for i, genes_i in enumerate(top_genes_a):
         for j, genes_j in enumerate(top_genes_b):
@@ -177,8 +183,7 @@ def _match_greedy(
     top_genes_b: list[set],
     min_similarity: float,
 ) -> set[int]:
-    """Return indices in a that have at least one match in b above threshold."""
-    sim = _similarity_matrix(top_genes_a, top_genes_b)
+    sim        = _similarity_matrix(top_genes_a, top_genes_b)
     best_per_a = sim.max(axis=1)
     return set(np.where(best_per_a >= min_similarity)[0].tolist())
 
@@ -188,8 +193,7 @@ def _match_hungarian(
     top_genes_b: list[set],
     min_similarity: float,
 ) -> set[int]:
-    """Return indices in a matched to a unique factor in b above threshold."""
-    sim = _similarity_matrix(top_genes_a, top_genes_b)
+    sim              = _similarity_matrix(top_genes_a, top_genes_b)
     row_idx, col_idx = linear_sum_assignment(-sim)
     return {r for r, c in zip(row_idx, col_idx) if sim[r, c] >= min_similarity}
 
@@ -201,39 +205,23 @@ def _prune(
     min_similarity: float,
     min_k: int,
     matching: str,
+    use_combined: bool,
 ) -> np.ndarray:
-    """Identify recurrent factors within a single sample across k resolutions.
+    """Identify recurrent factors within a single sample across k resolutions."""
+    split_points  = np.cumsum(k)[:-1]
+    factors_by_k  = np.split(factors, split_points)
 
-    Parameters
-    ----------
-    factors : np.ndarray
-        Factor loading matrix for one sample, shape (sum(k) × n_genes).
-    k : List[int]
-        List of factorisation ranks used.
-    top_k : int
-        Number of top genes used for Jaccard similarity.
-    min_similarity : float
-        Minimum Jaccard similarity to consider two factors matched.
-    min_k : int
-        Minimum number of other resolutions a factor must match.
-    matching : str
-        "greedy" or "hungarian".
+    top_genes_by_k = []
+    for resolution in factors_by_k:
+        # resolution shape: (k_i × n_genes)
+        scored = _combined_score(resolution) if use_combined else resolution
+        top_genes_by_k.append([
+            set(np.argsort(scored[i])[-top_k:])
+            for i in range(len(resolution))
+        ])
 
-    Returns
-    -------
-    np.ndarray
-        Local indices of factors that passed the recurrence filter.
-    """
-    split_points = np.cumsum(k)[:-1]
-    factors_by_k = np.split(factors, split_points)
-
-    top_genes_by_k = [
-        [set(np.argsort(factor)[-top_k:]) for factor in resolution]
-        for resolution in factors_by_k
-    ]
-
-    match_fn = _match_hungarian if matching == "hungarian" else _match_greedy
-    keep_local_idx = []
+    match_fn           = _match_hungarian if matching == "hungarian" else _match_greedy
+    keep_local_idx     = []
     cumulative_offsets = np.concatenate([[0], np.cumsum(k)])
 
     for k_idx, resolution_genes in enumerate(top_genes_by_k):
@@ -242,13 +230,11 @@ def _prune(
         for other_k_idx, other_resolution_genes in enumerate(top_genes_by_k):
             if other_k_idx == k_idx:
                 continue
-
             matched_indices = match_fn(
                 resolution_genes,
                 other_resolution_genes,
                 min_similarity,
             )
-
             for i in matched_indices:
                 n_matching[i] += 1
 

@@ -12,7 +12,7 @@ from matplotlib.colors import Normalize
 from typing import Dict, List, Tuple
 
 
-def annotate(
+def programs_annotate(
     adata: AnnData,
     top_n: int = 10,
     padj_thresh: float = 0.05,

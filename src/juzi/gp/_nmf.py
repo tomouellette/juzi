@@ -13,7 +13,7 @@ from typing import List, Tuple, Union
 from tqdm import tqdm
 
 
-def nmf(
+def nmf_fit(
     adata: AnnData,
     key: str,
     layer: str | None = None,
@@ -298,6 +298,31 @@ def _recompute_keep(adata: AnnData) -> None:
         & adata.uns["juzi_keep_similarity"]
         & adata.uns["juzi_keep_cluster"]
     )
+
+
+def _combined_score(G: np.ndarray) -> np.ndarray:
+    """Compute combined loading × specificity score.
+
+    Score = raw loading × (loading / total loading across programs)
+           = G * (G / G.sum(axis=0))
+
+    High only when a gene is both highly loaded in this program AND
+    relatively specific to it. Near-zero genes score near-zero regardless
+    of their specificity ratio. G has shape (n_programs × n_genes).
+
+    Parameters
+    ----------
+    G : np.ndarray
+        Loading matrix of shape (n_programs × n_genes). Rows are programs,
+        columns are genes.
+
+    Returns
+    -------
+    np.ndarray
+        Combined score matrix of same shape as G.
+    """
+    total = G.sum(axis=0, keepdims=True) + 1e-8
+    return G * (G / total)
 
 
 def _nmf(

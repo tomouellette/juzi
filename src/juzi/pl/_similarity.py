@@ -13,7 +13,7 @@ from typing import Tuple
 def similarity(
     adata: AnnData,
     thresholds: np.ndarray | None = None,
-    figsize: Tuple[float, float] = (7., 3.),
+    figsize: Tuple[float, float] = (7.0, 3.0),
     color: str = "#2b5566",
     fontsize: int = 8,
     bins: int = 50,
@@ -70,25 +70,22 @@ def similarity(
     for field in ["juzi_similarity", "juzi_similarity_idx", "juzi_names"]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. "
-                "Run juzi.gp.similarity first."
+                f"'{field}' not found in .uns. " "Run juzi.gp.similarity first."
             )
 
     if (ax_retention is None) != (ax_hist is None):
-        raise ValueError(
-            "Provide both ax_retention and ax_hist, or neither."
-        )
+        raise ValueError("Provide both ax_retention and ax_hist, or neither.")
 
     if thresholds is None:
         thresholds = np.linspace(0, 1, 100)
 
     # Compute max similarity per factor
 
-    sim      = adata.uns["juzi_similarity"]
-    sim_idx  = adata.uns["juzi_similarity_idx"]
-    n_total  = len(adata.uns["juzi_names"])
+    sim = adata.uns["juzi_similarity"]
+    sim_idx = adata.uns["juzi_similarity_idx"]
+    n_total = len(adata.uns["juzi_names"])
 
-    max_per_factor          = np.zeros(n_total)
+    max_per_factor = np.zeros(n_total)
     max_per_factor[sim_idx] = sim.max(axis=1)
 
     base_mask = adata.uns.get(
@@ -96,10 +93,9 @@ def similarity(
         np.zeros(n_total, dtype=bool),
     )
 
-    n_retained = np.array([
-        (base_mask & (max_per_factor >= t)).sum()
-        for t in thresholds
-    ])
+    n_retained = np.array(
+        [(base_mask & (max_per_factor >= t)).sum() for t in thresholds]
+    )
 
     max_sim_values = max_per_factor[sim_idx]
 
@@ -108,9 +104,9 @@ def similarity(
     created_fig = ax_retention is None
     if created_fig:
         fig = plt.figure(figsize=figsize)
-        gs  = gridspec.GridSpec(1, 2, figure=fig, wspace=0.35)
+        gs = gridspec.GridSpec(1, 2, figure=fig, wspace=0.35)
         ax_retention = fig.add_subplot(gs[0])
-        ax_hist      = fig.add_subplot(gs[1])
+        ax_hist = fig.add_subplot(gs[1])
 
     # Left panel — retention curve
 
@@ -123,7 +119,7 @@ def similarity(
     )
 
     ax_retention.set_xlabel("Min similarity threshold", fontsize=fontsize)
-    ax_retention.set_ylabel("Factors retained",         fontsize=fontsize)
+    ax_retention.set_ylabel("Factors retained", fontsize=fontsize)
     ax_retention.tick_params(axis="both", length=2, labelsize=fontsize)
 
     for spine in ["top", "right"]:
@@ -172,10 +168,7 @@ def similarity(
         ax_hist.spines[spine].set_linewidth(0.5)
 
     n_in_sim = len(sim_idx)
-    n_base   = int(base_mask.sum())
-
-    if created_fig:
-        fig.tight_layout()
+    n_base = int(base_mask.sum())
 
     return ax_retention, ax_hist
 
@@ -220,13 +213,13 @@ def _fit_gmm(
         )
         return None
 
-    X   = values.reshape(-1, 1)
+    X = values.reshape(-1, 1)
     gmm = GaussianMixture(n_components=2, random_state=0, n_init=5)
     gmm.fit(X)
 
-    means   = gmm.means_.flatten()
+    means = gmm.means_.flatten()
     noise_c = int(np.argmin(means))
-    sig_c   = int(np.argmax(means))
+    sig_c = int(np.argmax(means))
 
     # Warn if components are not well separated
     if np.abs(means[noise_c] - means[sig_c]) < 0.05:
@@ -241,16 +234,14 @@ def _fit_gmm(
 
     # Scale density to histogram counts
     bin_width = bin_edges[1] - bin_edges[0]
-    n         = len(values)
-    x_grid    = np.linspace(0, 1, 500)
+    n = len(values)
+    x_grid = np.linspace(0, 1, 500)
 
-    for c_idx, (linestyle, label) in enumerate(
-        zip(["--", "-"], ["Noise", "Signal"])
-    ):
-        c     = noise_c if c_idx == 0 else sig_c
-        mu    = gmm.means_[c, 0]
+    for c_idx, (linestyle, label) in enumerate(zip(["--", "-"], ["Noise", "Signal"])):
+        c = noise_c if c_idx == 0 else sig_c
+        mu = gmm.means_[c, 0]
         sigma = np.sqrt(gmm.covariances_[c, 0, 0])
-        w     = gmm.weights_[c]
+        w = gmm.weights_[c]
         density_scaled = w * norm.pdf(x_grid, mu, sigma) * n * bin_width
         ax.plot(
             x_grid,
@@ -263,8 +254,8 @@ def _fit_gmm(
         )
 
     # Find crossover where P(signal | x) >= P(noise | x)
-    grid      = x_grid.reshape(-1, 1)
-    proba     = gmm.predict_proba(grid)
+    grid = x_grid.reshape(-1, 1)
+    proba = gmm.predict_proba(grid)
     cross_idx = np.argmax(proba[:, sig_c] >= proba[:, noise_c])
     threshold = float(x_grid[cross_idx])
 
