@@ -17,7 +17,7 @@ from ._nmf import _combined_score
 def score_cells(
     adata: AnnData,
     n_top_genes: int = 50,
-    use_combined: bool = True,
+    use_combined: bool = False,
     n_control_genes: int = 50,
     gene_pool: List[str] | None = None,
     gene_names_col: str | None = None,
@@ -345,13 +345,12 @@ def score_classify(
 
     for field, store in [
         ("juzi_program_scores", "obsm"),
-        ("juzi_program_genes",  "uns"),
+        ("juzi_program_genes", "uns"),
         ("juzi_cluster_labels", "uns"),
     ]:
         if field not in getattr(adata, store):
             raise KeyError(
-                f"'{field}' not found in .{store}. "
-                "Run juzi.gp.score_cells first."
+                f"'{field}' not found in .{store}. " "Run juzi.gp.score_cells first."
             )
 
     if n_shuffles < 1:
@@ -367,9 +366,7 @@ def score_classify(
         raise KeyError(f"Layer '{layer}' not found in adata.layers.")
 
     if gene_names_col is not None and gene_names_col not in adata.var:
-        raise KeyError(
-            f"'{gene_names_col}' not found in adata.var."
-        )
+        raise KeyError(f"'{gene_names_col}' not found in adata.var.")
 
     # Setup
 
@@ -384,18 +381,18 @@ def score_classify(
         else adata.var_names.to_numpy()
     )
 
-    program_genes = adata.uns["juzi_program_genes"] # dict: int -> List[str]
-    n_programs    = len(program_genes)
-    n_cells       = adata.n_obs
+    program_genes = adata.uns["juzi_program_genes"]  # dict: int -> List[str]
+    n_programs = len(program_genes)
+    n_cells = adata.n_obs
 
     # Map program genes to cell expression indices
     gene_to_idx = {g: i for i, g in enumerate(cell_genes)}
     prog_indices: List[np.ndarray] = []
     for p in range(n_programs):
-        genes   = program_genes[p]
-        indices = np.array([
-            gene_to_idx[g] for g in genes if g in gene_to_idx
-        ], dtype=int)
+        genes = program_genes[p]
+        indices = np.array(
+            [gene_to_idx[g] for g in genes if g in gene_to_idx], dtype=int
+        )
         prog_indices.append(indices)
 
     if any(len(idx) == 0 for idx in prog_indices):
@@ -408,7 +405,7 @@ def score_classify(
 
     # Per-shuffle seeds
 
-    rng           = np.random.default_rng(seed)
+    rng = np.random.default_rng(seed)
     shuffle_seeds = rng.integers(0, 2**31, size=n_shuffles)
 
     # Cap n_cells_per_shuffle at actual cell count
@@ -434,69 +431,69 @@ def score_classify(
 
     # null_scores: list of n_shuffles arrays each (n_programs,)
     # Stack to (n_shuffles × n_programs)
-    null_matrix = np.vstack(null_scores) # (n_shuffles × n_programs)
+    null_matrix = np.vstack(null_scores)  # (n_shuffles × n_programs)
 
     # Fit null distribution per program
 
-    null_mean = null_matrix.mean(axis=0) # (n_programs,)
-    null_std  = null_matrix.std(axis=0) # (n_programs,)
+    null_mean = null_matrix.mean(axis=0)  # (n_programs,)
+    null_std = null_matrix.std(axis=0)  # (n_programs,)
 
     # Avoid division by zero for programs with zero-variance null
     null_std = np.where(null_std == 0, 1e-8, null_std)
 
     # Compute z-scores and p-values for real cells
 
-    real_scores = adata.obsm["juzi_program_scores"] # (n_cells × n_programs)
+    real_scores = adata.obsm["juzi_program_scores"]  # (n_cells × n_programs)
 
     # z-score each cell against the null for each program
     z_scores = (real_scores - null_mean[None, :]) / null_std[None, :]
 
     # One-sided p-value; probability of observing a score this high under null
-    pvals = stats.norm.sf(z_scores) # (n_cells × n_programs)
+    pvals = stats.norm.sf(z_scores)  # (n_cells × n_programs)
 
     # BH correction across all program by cell pairs
     # Flatten, correct, reshape
 
-    flat_pvals          = pvals.flatten()
-    _, flat_padj, _, _  = multipletests(flat_pvals, method="fdr_bh")
-    padj                = flat_padj.reshape(n_cells, n_programs)
+    flat_pvals = pvals.flatten()
+    _, flat_padj, _, _ = multipletests(flat_pvals, method="fdr_bh")
+    padj = flat_padj.reshape(n_cells, n_programs)
 
     # Cell assignment
 
-    unique_C    = np.unique(adata.uns["juzi_cluster_labels"])
-    prog_names  = [f"C{int(c)}" for c in unique_C]
-    labels_out  = np.full(n_cells, "unresolved", dtype=object)
+    unique_C = np.unique(adata.uns["juzi_cluster_labels"])
+    prog_names = [f"C{int(c)}" for c in unique_C]
+    labels_out = np.full(n_cells, "unresolved", dtype=object)
 
-    sig_mask    = padj < padj_thresh # (n_cells × n_programs)
-    n_sig       = sig_mask.sum(axis=1) # (n_cells,)
+    sig_mask = padj < padj_thresh  # (n_cells × n_programs)
+    n_sig = sig_mask.sum(axis=1)  # (n_cells,)
 
     # Cells significant for exactly one program
-    single_sig  = n_sig == 1
+    single_sig = n_sig == 1
     if single_sig.any():
-        prog_idx                    = np.argmax(sig_mask[single_sig], axis=1)
-        labels_out[single_sig]      = [prog_names[p] for p in prog_idx]
+        prog_idx = np.argmax(sig_mask[single_sig], axis=1)
+        labels_out[single_sig] = [prog_names[p] for p in prog_idx]
 
     # Cells significant for multiple programs — assign to max score
-    multi_sig   = n_sig > 1
+    multi_sig = n_sig > 1
     if multi_sig.any():
         # Mask non-significant scores before taking argmax
-        masked_scores               = real_scores.copy()
-        masked_scores[~sig_mask]    = -np.inf
-        prog_idx                    = np.argmax(masked_scores[multi_sig], axis=1)
-        labels_out[multi_sig]       = [prog_names[p] for p in prog_idx]
+        masked_scores = real_scores.copy()
+        masked_scores[~sig_mask] = -np.inf
+        prog_idx = np.argmax(masked_scores[multi_sig], axis=1)
+        labels_out[multi_sig] = [prog_names[p] for p in prog_idx]
 
     # Store results
 
     adata.obsm["juzi_program_pvals"] = pvals.astype(np.float32)
-    adata.obsm["juzi_program_padj"]  = padj.astype(np.float32)
-    adata.obs["juzi_program_label"]  = labels_out
+    adata.obsm["juzi_program_padj"] = padj.astype(np.float32)
+    adata.obs["juzi_program_label"] = labels_out
 
     adata.uns["juzi_classify_params"] = {
-        "n_shuffles":          n_shuffles,
+        "n_shuffles": n_shuffles,
         "n_cells_per_shuffle": n_cells_per_shuffle,
-        "padj_thresh":         padj_thresh,
-        "null_mean":           null_mean,
-        "null_std":            null_std,
+        "padj_thresh": padj_thresh,
+        "null_mean": null_mean,
+        "null_std": null_std,
     }
 
     return adata if copy else None
@@ -532,15 +529,15 @@ def _score_shuffle(
     rng = np.random.default_rng(seed)
 
     # Subsample cells
-    cell_idx  = rng.choice(X.shape[0], size=n_cells, replace=False)
-    X_sub     = X[cell_idx].copy()                     # (n_cells × n_genes)
+    cell_idx = rng.choice(X.shape[0], size=n_cells, replace=False)
+    X_sub = X[cell_idx].copy()  # (n_cells × n_genes)
 
     # Shuffle expression values per gene independently
     for g in range(X_sub.shape[1]):
         X_sub[:, g] = rng.permutation(X_sub[:, g])
 
     # Score each program — mean expression of program genes per cell
-    n_programs  = len(prog_indices)
+    n_programs = len(prog_indices)
     mean_scores = np.zeros(n_programs, dtype=np.float32)
 
     for p, indices in enumerate(prog_indices):

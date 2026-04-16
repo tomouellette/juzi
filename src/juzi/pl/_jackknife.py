@@ -69,20 +69,20 @@ def programs_jackknife(
     # Extract results
 
     jack = adata.uns["juzi_jackknife"]
-    S_mat = jack["stability_matrix"] # (K × N)
-    stability  = jack["stability"] # (K,)
-    donors     = jack["donors"] # (N,)
-    labels     = adata.uns["juzi_cluster_labels"]
-    unique_C   = np.unique(labels)
-    K          = len(unique_C)
-    N          = len(donors)
+    S_mat = jack["stability_matrix"]  # (K × N)
+    stability = jack["stability"]  # (K,)
+    donors = jack["donors"]  # (N,)
+    labels = adata.uns["juzi_cluster_labels"]
+    unique_C = np.unique(labels)
+    K = len(unique_C)
+    N = len(donors)
 
     prog_labels = [f"C{int(c)}" for c in unique_C]
 
     # Palette
 
     if palette is None:
-        colors  = glasbey.create_palette(
+        colors = glasbey.create_palette(
             K,
             chroma_bounds=(5, 40),
             lightness_bounds=(0, 100),
@@ -96,7 +96,7 @@ def programs_jackknife(
         if figsize is None:
             figsize = (
                 max(4.0, 0.25 * N + 2.0),
-                max(2.0, 0.4  * K + 1.0),
+                max(2.0, 0.4 * K + 1.0),
             )
         fig, ax = plt.subplots(figsize=figsize, layout="constrained")
 
@@ -114,14 +114,17 @@ def programs_jackknife(
 
     for k, c in enumerate(unique_C):
         color = palette[int(c)]
-        ax.add_patch(plt.Rectangle(
-            (-1.5, k - 0.5),
-            0.8, 1.0,
-            facecolor=color,
-            edgecolor="none",
-            clip_on=False,
-            transform=ax.transData,
-        ))
+        ax.add_patch(
+            plt.Rectangle(
+                (-1.5, k - 0.5),
+                0.8,
+                1.0,
+                facecolor=color,
+                edgecolor="none",
+                clip_on=False,
+                transform=ax.transData,
+            )
+        )
 
     # Mean stability annotation on right
 

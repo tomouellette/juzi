@@ -17,7 +17,7 @@ def similarity_compute(
     top_k: int | None = 50,
     intra_sample: bool = True,
     drop_zeros: bool = True,
-    use_combined: bool = True,
+    use_combined: bool = False,
     n_jobs: int = 1,
     prefer: str | None = None,
     silent: bool = False,

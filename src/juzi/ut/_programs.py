@@ -13,7 +13,7 @@ from juzi.gp._nmf import _combined_score
 def program_genes(
     adata: AnnData,
     n_top_genes: int = 50,
-    use_combined: bool = True,
+    use_combined: bool = False,
 ) -> Dict[str, List[str]]:
     """Extract top genes per consensus program.
 
@@ -63,7 +63,7 @@ def program_compare(
     adata_a: AnnData,
     adata_b: AnnData,
     n_top_genes: int = 50,
-    use_combined: bool = True,
+    use_combined: bool = False,
 ) -> pd.DataFrame:
     """Compare consensus programs between two datasets via Jaccard similarity.
 

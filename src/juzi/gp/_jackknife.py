@@ -14,7 +14,7 @@ from ._cluster import _cluster_at_threshold
 def programs_jackknife(
     adata: AnnData,
     n_top_genes: int = 50,
-    use_combined: bool = True,
+    use_combined: bool = False,
     n_jobs: int = 1,
     prefer: str = "threads",
     silent: bool = False,
@@ -79,14 +79,14 @@ def programs_jackknife(
     # Validate
 
     for field, store in [
-        ("juzi_cluster_G",      "uns"),
+        ("juzi_cluster_G", "uns"),
         ("juzi_cluster_labels", "uns"),
-        ("juzi_G_genes",        "uns"),
-        ("juzi_similarity",     "uns"),
+        ("juzi_G_genes", "uns"),
+        ("juzi_similarity", "uns"),
         ("juzi_similarity_idx", "uns"),
-        ("juzi_names",          "uns"),
-        ("juzi_keep",           "uns"),
-        ("juzi_G",              "varm"),
+        ("juzi_names", "uns"),
+        ("juzi_keep", "uns"),
+        ("juzi_G", "varm"),
     ]:
         if field not in getattr(adata, store):
             raise KeyError(
@@ -99,37 +99,37 @@ def programs_jackknife(
 
     # Read clustering parameters
 
-    sweep       = adata.uns.get("juzi_threshold_sweep", {})
-    threshold   = sweep.get("optimal",     0.1)
+    sweep = adata.uns.get("juzi_threshold_sweep", {})
+    threshold = sweep.get("optimal", 0.1)
     min_cluster = sweep.get("min_cluster", 2)
-    method      = sweep.get("method",      "average")
+    method = sweep.get("method", "average")
 
     # Setup
 
-    sim_idx    = adata.uns["juzi_similarity_idx"] # (n_kept,)
-    S_full     = adata.uns["juzi_similarity"] # (n_kept × n_kept)
-    full_names = np.array(adata.uns["juzi_names"]) # (n_total,)
-    full_G     = adata.varm["juzi_G"].T # (n_total × n_genes)
+    sim_idx = adata.uns["juzi_similarity_idx"]  # (n_kept,)
+    S_full = adata.uns["juzi_similarity"]  # (n_kept × n_kept)
+    full_names = np.array(adata.uns["juzi_names"])  # (n_total,)
+    full_G = adata.varm["juzi_G"].T  # (n_total × n_genes)
     gene_names = np.array(adata.uns["juzi_G_genes"])
     global_keep = adata.uns["juzi_keep"]
 
-    sim_names  = full_names[sim_idx] # (n_kept,)
-    sim_G      = full_G[sim_idx] # (n_kept × n_genes)
-    base_mask  = global_keep[sim_idx].copy() # (n_kept,)
+    sim_names = full_names[sim_idx]  # (n_kept,)
+    sim_G = full_G[sim_idx]  # (n_kept × n_genes)
+    base_mask = global_keep[sim_idx].copy()  # (n_kept,)
 
-    donors     = sorted(np.unique(sim_names[base_mask]).tolist())
-    N          = len(donors)
+    donors = sorted(np.unique(sim_names[base_mask]).tolist())
+    N = len(donors)
 
     # Reference program top genes
 
-    G_ref      = adata.uns["juzi_cluster_G"] # (K × n_genes)
+    G_ref = adata.uns["juzi_cluster_G"]  # (K × n_genes)
     labels_ref = adata.uns["juzi_cluster_labels"]
-    unique_C   = np.unique(labels_ref)
-    K          = len(unique_C)
+    unique_C = np.unique(labels_ref)
+    K = len(unique_C)
 
     G_rank_ref = _combined_score(G_ref) if use_combined else G_ref
 
-    ref_genes  = []
+    ref_genes = []
     for i, c in enumerate(unique_C):
         top_idx = np.argsort(G_rank_ref[i])[-n_top_genes:]
         ref_genes.append(set(gene_names[top_idx].tolist()))
@@ -164,11 +164,11 @@ def programs_jackknife(
     # By construction all donors in sim_names[base_mask] are in donors,
     # so donor_in_sim is always all True — but kept for correctness.
 
-    donor_in_sim = np.array([
-        (sim_names[base_mask] == d).any() for d in donors
-    ], dtype=bool)
+    donor_in_sim = np.array(
+        [(sim_names[base_mask] == d).any() for d in donors], dtype=bool
+    )
 
-    n_valid   = donor_in_sim.sum()
+    n_valid = donor_in_sim.sum()
     stability = (
         stability_matrix[:, donor_in_sim].mean(axis=1)
         if n_valid > 0
@@ -178,12 +178,12 @@ def programs_jackknife(
     # Store results
 
     adata.uns["juzi_jackknife"] = {
-        "stability":        stability,
+        "stability": stability,
         "stability_matrix": stability_matrix,
-        "donors":           donors,
-        "n_top_genes":      n_top_genes,
-        "threshold":        threshold,
-        "min_cluster":      min_cluster,
+        "donors": donors,
+        "n_top_genes": n_top_genes,
+        "threshold": threshold,
+        "min_cluster": min_cluster,
     }
 
     return adata if copy else None
@@ -274,14 +274,14 @@ def _jackknife_iteration(
         return scores
 
     # Extract jackknife program top genes from final local_mask
-    G_jack_active = sim_G[local_mask]              # (n_active × n_genes)
-    unique_jack   = np.unique(clusters_jack)
+    G_jack_active = sim_G[local_mask]  # (n_active × n_genes)
+    unique_jack = np.unique(clusters_jack)
 
     jack_genes = []
     for c in unique_jack:
-        centroid  = G_jack_active[clusters_jack == c].mean(axis=0, keepdims=True)
-        G_rank    = _combined_score(centroid) if use_combined else centroid
-        top_idx   = np.argsort(G_rank[0])[-n_top_genes:]
+        centroid = G_jack_active[clusters_jack == c].mean(axis=0, keepdims=True)
+        G_rank = _combined_score(centroid) if use_combined else centroid
+        top_idx = np.argsort(G_rank[0])[-n_top_genes:]
         jack_genes.append(set(gene_names[top_idx].tolist()))
 
     # Max Jaccard between each reference program and any jackknife program

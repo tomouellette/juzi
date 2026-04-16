@@ -14,7 +14,7 @@ def programs_annotate(
     adata: AnnData,
     gene_sets: Dict[str, List[str]] | object,
     n_top_genes: int = 50,
-    use_combined: bool = True,
+    use_combined: bool = False,
     padj_method: str = "fdr_bh",
     copy: bool = False,
 ) -> AnnData | None:

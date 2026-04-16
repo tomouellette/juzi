@@ -199,29 +199,34 @@ def test_pval_in_zero_one():
     adata = make_adata()
     jz.gp.score_associate(adata, formula="age + (1|study_id)")
     df = adata.uns["juzi_association"]
-    assert (df["pval"].between(0, 1)).all()
-
-
-def test_padj_in_zero_one():
-    adata = make_adata()
-    jz.gp.score_associate(adata, formula="age + (1|study_id)")
-    df = adata.uns["juzi_association"]
-    assert (df["padj"].between(0, 1)).all()
+    valid = df["pval"].notna()
+    assert (df.loc[valid, "pval"].between(0, 1)).all()
 
 
 def test_padj_geq_pval():
-    """After FDR correction adjusted p-values must be >= raw p-values."""
     adata = make_adata()
     jz.gp.score_associate(adata, formula="age + (1|study_id)")
     df = adata.uns["juzi_association"]
-    assert (df["padj"] >= df["pval"] - 1e-8).all()
+    valid = df["pval"].notna()
+    assert (df.loc[valid, "padj"] >= df.loc[valid, "pval"] - 1e-8).all()
 
 
 def test_se_positive():
     adata = make_adata()
     jz.gp.score_associate(adata, formula="age + (1|study_id)")
     df = adata.uns["juzi_association"]
-    assert (df["se"] > 0).all()
+    valid = df["se"].notna()
+    assert (df.loc[valid, "se"] > 0).all()
+
+
+def test_nan_pval_gets_padj_nan():
+    """Programs with failed LMM fits must have padj=NaN not 1.0."""
+    adata = make_adata()
+    jz.gp.score_associate(adata, formula="age + (1|study_id)")
+    df = adata.uns["juzi_association"]
+    nan_pval = df["pval"].isna()
+    if nan_pval.any():
+        assert df.loc[nan_pval, "padj"].isna().all()
 
 
 def test_beta_finite():

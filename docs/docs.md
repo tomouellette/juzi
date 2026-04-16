@@ -77,7 +77,7 @@ print(adata.obs["sample_id"].value_counts())
 
 ## A note on ranking genes
 
-`juzi` ranks genes using a weighted log-ratio score that rewards both high
+`juzi` ranks genes using raw loadings by default. However, genes can alternatively be ranked using a weighted log-ratio score that rewards both high
 absolute loading and program exclusivity:
 
 ```
@@ -92,9 +92,9 @@ near-zero genes contribute nothing regardless of their log-ratio. Together
 they select genes that are both highly expressed in the program and not
 shared with other programs.
 
-Set `use_combined=False` in `nmf_prune`, `similarity_compute`, `score_cells`,
+Set `use_combined=True` in any of `nmf_prune`, `similarity_compute`, `score_cells`,
 `programs_annotate`, `programs_genes`, `programs_compare`, and
-`programs_loadings` to fall back to raw loading magnitude.
+`programs_loadings` to rank genes by the weighted log-ratio score.
 
 ---
 
@@ -572,7 +572,9 @@ df         = jz.ut.programs_compare(adata_cohort_a, adata_cohort_b)
 | Parameter | Default | Description |
 |---|---|---|
 | `top_k` | `50` | Top genes for Jaccard similarity |
-| `min_similarity` | `0.7` | Minimum Jaccard to consider factors matched |
+| `min_similarity`  | `0.1` | Minimum Jaccard for recurrence detection across resolutions |
+| `dedup_similarity`| `0.5` | Minimum Jaccard for within-sample deduplication — should be > min_similarity |
+| `deduplicate`     | `True`| Apply within-sample deduplication after recurrence filter |
 | `min_k` | `1` | Minimum other resolutions a factor must match |
 | `matching` | `"greedy"` | `"greedy"` or `"hungarian"` |
 | `use_combined` | `True` | Rank genes by combined loading × specificity score |

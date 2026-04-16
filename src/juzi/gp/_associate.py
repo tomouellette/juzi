@@ -236,12 +236,16 @@ def score_associate(
     # FDR correction
 
     assoc_df = pd.DataFrame(results)
+    valid_mask = assoc_df["pval"].notna()
+    padj = np.full(len(assoc_df), np.nan)
 
-    _, assoc_df["padj"], _, _ = multipletests(
-        assoc_df["pval"].fillna(1.0),
-        method=padj_method,
-    )
+    if valid_mask.any():
+        _, padj_valid, _, _ = multipletests(
+            assoc_df.loc[valid_mask, "pval"], method=padj_method
+        )
+        padj[valid_mask.values] = padj_valid
 
+    assoc_df["padj"] = padj
     assoc_df = assoc_df.sort_values("padj").reset_index(drop=True)
 
     adata.uns["juzi_association"] = assoc_df

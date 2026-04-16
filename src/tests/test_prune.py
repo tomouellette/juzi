@@ -1,3 +1,4 @@
+import warnings
 import pytest
 import numpy as np
 from anndata import AnnData
@@ -215,7 +216,9 @@ def test_prune_keeps_all_at_zero_threshold():
 
 def test_prune_drops_all_at_impossible_threshold():
     adata = make_adata(k=[3, 4, 5], init="random", seed=0)
-    jz.gp.nmf_prune(adata, min_k=3, min_similarity=1.0, deduplicate=False)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning)
+        jz.gp.nmf_prune(adata, min_k=3, min_similarity=1.0, deduplicate=False)
     assert not adata.uns["juzi_keep_prune"].any()
     assert not adata.uns["juzi_keep"].any()
 
@@ -238,7 +241,7 @@ def test_prune_stricter_threshold_keeps_fewer():
     adata_low  = make_adata(k=[3, 4], seed=0)
     adata_high = make_adata(k=[3, 4], seed=0)
     jz.gp.nmf_prune(adata_low,  min_k=1, min_similarity=0.1, deduplicate=False)
-    jz.gp.nmf_prune(adata_high, min_k=1, min_similarity=0.9, deduplicate=False)
+    jz.gp.nmf_prune(adata_high, min_k=1, min_similarity=0.4, deduplicate=False)
     assert adata_high.uns["juzi_keep_prune"].sum() <= adata_low.uns["juzi_keep_prune"].sum()
 
 

@@ -1,6 +1,7 @@
 # Copyright (c) 2025, Tom Ouellette
 # Licensed under the BSD 3-Clause License
 
+import warnings
 import numpy as np
 
 from anndata import AnnData
@@ -11,15 +12,15 @@ from tqdm import tqdm
 
 from ._nmf import _recompute_keep, _combined_score
 
-
 def nmf_prune(
     adata: AnnData,
     top_k: int = 50,
     min_similarity: float = 0.1,
+    dedup_similarity: float = 0.7,
     min_k: int = 1,
     matching: str = "hungarian",
     deduplicate: bool = True,
-    use_combined: bool = True,
+    use_combined: bool = False,
     n_jobs: int = 1,
     prefer: str | None = None,
     silent: bool = False,
@@ -27,73 +28,62 @@ def nmf_prune(
 ) -> AnnData | None:
     """Prune non-recurrent and redundant intra-sample factors.
 
-    For each sample, NMF was fit at multiple resolutions k. This function
-    applies two sequential filters:
+    Applies two sequential filters per sample:
 
     1. Recurrence filter — a factor is kept if it shares sufficient
        top-gene overlap (Jaccard >= min_similarity) with at least one
-       factor from each of min_k other resolutions. Non-recurrent factors
-       are masked before cross-sample similarity is computed.
+       factor from each of min_k other resolutions.
 
-    2. Deduplication filter (when deduplicate=True) — among the factors
-       that passed the recurrence filter, any two factors from the same
-       sample that share Jaccard >= min_similarity are considered redundant.
-       The most central factor (highest mean Jaccard to all other factors
-       in the redundant group) is retained; the others are masked.
-
-    Both filters use the same min_similarity threshold — the same
-    definition of "sufficiently similar to be the same program" applies
-    to both recurrence detection and redundancy removal.
+    2. Deduplication filter (when deduplicate=True) — among factors that
+       passed recurrence, any two factors with Jaccard >= dedup_similarity
+       are considered redundant. The most central factor per redundant
+       group is retained. dedup_similarity should be set higher than
+       min_similarity since deduplication tests for near-identical
+       programs rather than merely related ones.
 
     Parameters
     ----------
     adata : AnnData
-        AnnData object fit with juzi.gp.nmf_fit. Must contain juzi_G
-        in .varm and juzi_k, juzi_names in .uns.
+        AnnData object fit with juzi.gp.nmf_fit.
     top_k : int
-        Number of top-loaded genes used to compute Jaccard similarity.
-        Must be <= number of genes.
+        Number of top-loaded genes for Jaccard computation.
     min_similarity : float
-        Minimum Jaccard similarity threshold. Used for both recurrence
-        detection and deduplication. Must be in [0, 1].
+        Minimum Jaccard for recurrence detection across resolutions.
+        Must be in [0, 1].
+    dedup_similarity : float
+        Minimum Jaccard for within-sample deduplication. Should be
+        higher than min_similarity — two factors sharing this fraction
+        of top genes are considered the same program. Must be in [0, 1].
+        Ignored when deduplicate=False.
     min_k : int
-        Minimum number of other k resolutions a factor must match to be
-        considered recurrent. Must be <= len(juzi_k).
+        Minimum other resolutions a factor must match.
     matching : str
-        Strategy for matching factors across resolutions: "hungarian" or
-        "greedy"
+        "hungarian" (default) or "greedy".
     deduplicate : bool
-        If True, apply within-sample deduplication after recurrence
-        filtering. Factors with pairwise Jaccard >= min_similarity are
-        grouped and only the most central factor per group is retained.
-        Follows Gavish et al. 2023.
+        If True, apply within-sample deduplication after recurrence.
     use_combined : bool
-        If True, rank genes by combined loading x specificity score
-        before selecting top_k genes for Jaccard computation.
-        If False, rank by raw loading magnitude.
+        If True, rank genes by weighted log-ratio score.
     n_jobs : int
-        Number of parallel workers for pruning across samples.
+        Parallel workers.
     prefer : str | None
-        Joblib parallelisation backend preference.
+        Joblib backend preference.
     silent : bool
-        If True, suppress progress bar.
+        Suppress progress bar.
     copy : bool
-        If True, return a modified copy. If False, modify in place.
+        Return modified copy if True.
 
     Returns
     -------
     AnnData | None
-        AnnData with the following fields updated:
-            .uns["juzi_keep_prune"] : boolean mask of retained factors
-            .uns["juzi_keep"]       : intersection of all three stage masks
+        .uns["juzi_keep_prune"] and .uns["juzi_keep"] updated.
     """
     adata = adata.copy() if copy else adata
 
     # Validate
 
     for field, store in [
-        ("juzi_G", "varm"),
-        ("juzi_k", "uns"),
+        ("juzi_G",     "varm"),
+        ("juzi_k",     "uns"),
         ("juzi_names", "uns"),
     ]:
         if field not in getattr(adata, store):
@@ -103,11 +93,24 @@ def nmf_prune(
 
     if top_k > adata.n_vars:
         raise ValueError(
-            f"top_k={top_k} exceeds number of genes ({adata.n_vars}). " "Lower top_k."
+            f"top_k={top_k} exceeds number of genes ({adata.n_vars})."
         )
 
     if not 0.0 <= min_similarity <= 1.0:
         raise ValueError("min_similarity must be in [0, 1].")
+
+    if not 0.0 <= dedup_similarity <= 1.0:
+        raise ValueError("dedup_similarity must be in [0, 1].")
+
+    if dedup_similarity < min_similarity:
+        warnings.warn(
+            f"dedup_similarity={dedup_similarity} is lower than "
+            f"min_similarity={min_similarity}. This will aggressively "
+            "deduplicate factors that are only weakly similar. "
+            "Consider setting dedup_similarity >= min_similarity.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     if matching not in ("greedy", "hungarian"):
         raise ValueError("matching must be 'greedy' or 'hungarian'.")
@@ -115,59 +118,62 @@ def nmf_prune(
     n_resolutions = len(adata.uns["juzi_k"])
     if min_k > n_resolutions:
         raise ValueError(
-            f"min_k={min_k} exceeds number of k resolutions ({n_resolutions}). "
-            "Lower min_k or add more values to k."
+            f"min_k={min_k} exceeds number of k resolutions ({n_resolutions})."
         )
 
-    # Split juzi_G into per-sample factor blocks
+    # Split into per-sample blocks
 
-    names = np.array(adata.uns["juzi_names"])
-    G = adata.varm["juzi_G"].T  # (n_total_factors × n_genes)
-    k_list = adata.uns["juzi_k"]
-    n_comps = int(np.sum(k_list))
+    names    = np.array(adata.uns["juzi_names"])
+    G        = adata.varm["juzi_G"].T
+    k_list   = adata.uns["juzi_k"]
+    n_comps  = int(np.sum(k_list))
     n_unique = len(np.unique(names))
 
     if len(names) != n_unique * n_comps:
         raise ValueError(
             f"juzi_names length ({len(names)}) does not match "
-            f"n_samples ({n_unique}) × sum(k) ({n_comps}). "
-            "juzi_G may be corrupted — re-run juzi.gp.nmf_fit."
+            f"n_samples ({n_unique}) x sum(k) ({n_comps}). "
+            "Re-run juzi.gp.nmf_fit."
         )
 
     split_points = np.arange(n_comps, n_unique * n_comps, n_comps)
     per_sample_G = np.split(G, split_points)
 
-    # Prune per sample in parallel
+    # Parallel pruning
 
-    results = Parallel(n_jobs=n_jobs, prefer=prefer)(
+    jobs = [
         delayed(_prune_sample)(
             factors=sample_G,
             k=k_list,
             top_k=top_k,
             min_similarity=min_similarity,
+            dedup_similarity=dedup_similarity,
             min_k=min_k,
             matching=matching,
             deduplicate=deduplicate,
             use_combined=use_combined,
         )
-        for sample_G in tqdm(
-            per_sample_G,
+        for sample_G in per_sample_G
+    ]
+
+    results = list(
+        tqdm(
+            Parallel(n_jobs=n_jobs, prefer=prefer, return_as="generator")(jobs),
+            total=len(per_sample_G),
             desc="[juzi] Pruning",
             disable=silent,
         )
     )
 
-    # Build global boolean keep mask
+    # Build global mask
 
-    mask = np.zeros(len(names), dtype=bool)
+    mask               = np.zeros(len(names), dtype=bool)
     cumulative_offsets = np.arange(n_unique) * n_comps
 
     for sample_idx, local_keep_idx in enumerate(results):
         if len(local_keep_idx) > 0:
-            global_idx = cumulative_offsets[sample_idx] + local_keep_idx
+            global_idx       = cumulative_offsets[sample_idx] + local_keep_idx
             mask[global_idx] = True
-
-    # Update stage mask and recompute juzi_keep
 
     adata.uns["juzi_keep_prune"] = mask
     _recompute_keep(adata)
@@ -218,53 +224,29 @@ def _prune_sample(
     k: List[int],
     top_k: int,
     min_similarity: float,
+    dedup_similarity: float,
     min_k: int,
     matching: str,
     deduplicate: bool,
     use_combined: bool,
 ) -> np.ndarray:
-    """Prune one sample — recurrence filter then optional deduplication.
+    """Prune one sample — recurrence filter then optional deduplication."""
 
-    Parameters
-    ----------
-    factors : np.ndarray
-        Factor loading matrix for one sample, shape (sum(k) × n_genes).
-    k : List[int]
-        List of factorisation ranks used.
-    top_k : int
-        Number of top genes for Jaccard similarity.
-    min_similarity : float
-        Minimum Jaccard for recurrence and deduplication.
-    min_k : int
-        Minimum other resolutions a factor must match.
-    matching : str
-        "greedy" or "hungarian".
-    deduplicate : bool
-        If True, apply within-sample deduplication after recurrence filter.
-    use_combined : bool
-        If True, rank genes by combined loading × specificity score.
-
-    Returns
-    -------
-    np.ndarray
-        Local indices of factors that passed both filters.
-    """
-    split_points = np.cumsum(k)[:-1]
-    factors_by_k = np.split(factors, split_points)
-
-    # Gene ranking
+    split_points  = np.cumsum(k)[:-1]
+    factors_by_k  = np.split(factors, split_points)
 
     top_genes_by_k = []
     for resolution in factors_by_k:
         scored = _combined_score(resolution) if use_combined else resolution
-        top_genes_by_k.append(
-            [set(np.argsort(scored[i])[-top_k:]) for i in range(len(resolution))]
-        )
+        top_genes_by_k.append([
+            set(np.argsort(scored[i])[-top_k:])
+            for i in range(len(resolution))
+        ])
 
     # Recurrence filter
 
-    match_fn = _match_hungarian if matching == "hungarian" else _match_greedy
-    keep_local_idx = []
+    match_fn           = _match_hungarian if matching == "hungarian" else _match_greedy
+    keep_local_idx     = []
     cumulative_offsets = np.concatenate([[0], np.cumsum(k)])
 
     for k_idx, resolution_genes in enumerate(top_genes_by_k):
@@ -290,24 +272,19 @@ def _prune_sample(
 
     keep_local_idx = np.array(keep_local_idx, dtype=int)
 
-    # Deduplication filter
-    # Among kept factors, remove redundant ones with pairwise Jaccard
-    # >= min_similarity. Keep the most central factor per redundant group
-    # (highest mean Jaccard to all other factors in the group).
-
     if not deduplicate or len(keep_local_idx) <= 1:
         return keep_local_idx
 
-    # Extract top genes for kept factors only
+    # Deduplication filter
+    # Uses dedup_similarity — separate and typically higher than min_similarity
+
     kept_top_genes = []
     for idx in keep_local_idx:
-        # Find which resolution and position this local index corresponds to
         k_idx_for = np.searchsorted(cumulative_offsets[1:], idx, side="right")
-        pos_in_k = idx - cumulative_offsets[k_idx_for]
+        pos_in_k  = idx - cumulative_offsets[k_idx_for]
         kept_top_genes.append(top_genes_by_k[k_idx_for][pos_in_k])
 
-    # Pairwise Jaccard among kept factors
-    n_kept = len(keep_local_idx)
+    n_kept  = len(keep_local_idx)
     sim_mat = np.zeros((n_kept, n_kept))
     for i in range(n_kept):
         for j in range(i + 1, n_kept):
@@ -315,7 +292,7 @@ def _prune_sample(
             sim_mat[i, j] = s
             sim_mat[j, i] = s
 
-    # Union-find to group redundant factors
+    # Union-find grouping at dedup_similarity threshold
     parent = list(range(n_kept))
 
     def find(x):
@@ -329,11 +306,9 @@ def _prune_sample(
 
     for i in range(n_kept):
         for j in range(i + 1, n_kept):
-            if sim_mat[i, j] >= min_similarity:
+            if sim_mat[i, j] >= dedup_similarity:
                 union(i, j)
 
-    # For each group keep the most central factor —
-    # highest mean Jaccard to all other factors in the group
     groups: dict[int, list[int]] = {}
     for i in range(n_kept):
         root = find(i)
@@ -344,10 +319,10 @@ def _prune_sample(
         if len(group_members) == 1:
             dedup_keep.append(group_members[0])
         else:
-            # Most central = highest mean similarity to other group members
-            mean_sims = np.array(
-                [sim_mat[i, group_members].mean() for i in group_members]
-            )
+            mean_sims = np.array([
+                sim_mat[i, group_members].mean()
+                for i in group_members
+            ])
             best = group_members[int(np.argmax(mean_sims))]
             dedup_keep.append(best)
 

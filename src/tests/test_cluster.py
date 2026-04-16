@@ -46,7 +46,7 @@ def make_adata(
         intra_sample=intra_sample,
         drop_zeros=drop_zeros,
     )
-    jz.gp.programs_cluster(adata, threshold=0.3, min_cluster=1)
+    jz.gp.programs_cluster(adata, threshold=0.4, min_cluster=1)
 
     return adata
 
@@ -54,12 +54,12 @@ def make_adata(
 def make_adata_similarity(seed: int = 42) -> AnnData:
     """AnnData fit through similarity_compute only — no clustering."""
     rng = np.random.default_rng(seed)
-    profile_a = rng.normal(5.0,  1.0, size=(1, 100))
+    profile_a = rng.normal(5.0, 1.0, size=(1, 100))
     profile_b = rng.normal(90.0, 1.0, size=(1, 100))
     blocks, labels = [], []
     for i in range(4):
-        profile  = profile_a if i % 2 == 0 else profile_b
-        noise    = rng.normal(0.0, 0.5, size=(30, 100))
+        profile = profile_a if i % 2 == 0 else profile_b
+        noise = rng.normal(0.0, 0.5, size=(30, 100))
         X_sample = np.clip(profile + noise, 0, None)
         blocks.append(X_sample)
         labels.extend([f"sample_{i}"] * 30)
@@ -68,7 +68,9 @@ def make_adata_similarity(seed: int = 42) -> AnnData:
         obs={"donor_id": labels},
         var={"gene_name": np.arange(100).astype(str)},
     )
-    adata = jz.gp.nmf_fit(adata, key="donor_id", k=[2, 3], min_cells=10, genes=None, seed=seed)
+    adata = jz.gp.nmf_fit(
+        adata, key="donor_id", k=[2, 3], min_cells=10, genes=None, seed=seed
+    )
     jz.gp.similarity_compute(adata, distance="jaccard", top_k=20)
     return adata
 
@@ -446,7 +448,6 @@ def test_select_threshold_optimal_is_valid_threshold():
 
 
 class TestProgramsRemove:
-
     def test_error_missing_cluster_labels(self):
         adata = make_adata()
         del adata.uns["juzi_cluster_labels"]
@@ -481,16 +482,16 @@ class TestProgramsRemove:
             jz.gp.programs_remove(adata, clusters=[0, 0])
 
     def test_error_remove_all_programs(self):
-        adata    = make_adata()
+        adata = make_adata()
         all_labs = np.unique(adata.uns["juzi_cluster_labels"]).tolist()
         with pytest.raises(ValueError):
             jz.gp.programs_remove(adata, clusters=all_labs)
 
     def test_n_programs_reduced(self):
-        adata    = make_adata()
+        adata = make_adata()
         n_before = len(np.unique(adata.uns["juzi_cluster_labels"]))
         jz.gp.programs_remove(adata, clusters=[0])
-        n_after  = len(np.unique(adata.uns["juzi_cluster_labels"]))
+        n_after = len(np.unique(adata.uns["juzi_cluster_labels"]))
         assert n_after == n_before - 1
 
     def test_labels_contiguous_after_remove(self):
@@ -501,24 +502,24 @@ class TestProgramsRemove:
         np.testing.assert_array_equal(unique, np.arange(len(unique)))
 
     def test_cluster_G_rows_reduced(self):
-        adata    = make_adata()
+        adata = make_adata()
         n_before = adata.uns["juzi_cluster_G"].shape[0]
         jz.gp.programs_remove(adata, clusters=[0])
-        n_after  = adata.uns["juzi_cluster_G"].shape[0]
+        n_after = adata.uns["juzi_cluster_G"].shape[0]
         assert n_after == n_before - 1
 
     def test_similarity_shape_reduced(self):
-        adata    = make_adata()
+        adata = make_adata()
         n_before = adata.uns["juzi_cluster_similarity"].shape[0]
         jz.gp.programs_remove(adata, clusters=[0])
-        n_after  = adata.uns["juzi_cluster_similarity"].shape[0]
+        n_after = adata.uns["juzi_cluster_similarity"].shape[0]
         assert n_after < n_before
 
     def test_juzi_keep_cluster_updated(self):
-        adata      = make_adata()
+        adata = make_adata()
         keep_before = adata.uns["juzi_keep_cluster"].sum()
         jz.gp.programs_remove(adata, clusters=[0])
-        keep_after  = adata.uns["juzi_keep_cluster"].sum()
+        keep_after = adata.uns["juzi_keep_cluster"].sum()
         assert keep_after < keep_before
 
     def test_juzi_keep_recomputed(self):
@@ -526,9 +527,9 @@ class TestProgramsRemove:
         adata = make_adata()
         jz.gp.programs_remove(adata, clusters=[0])
         expected = (
-            adata.uns["juzi_keep_prune"]      &
-            adata.uns["juzi_keep_similarity"] &
-            adata.uns["juzi_keep_cluster"]
+            adata.uns["juzi_keep_prune"]
+            & adata.uns["juzi_keep_similarity"]
+            & adata.uns["juzi_keep_cluster"]
         )
         np.testing.assert_array_equal(adata.uns["juzi_keep"], expected)
 
@@ -541,33 +542,33 @@ class TestProgramsRemove:
         assert "juzi_jackknife" not in adata.uns
 
     def test_upstream_masks_not_modified(self):
-        adata        = make_adata()
+        adata = make_adata()
         prune_before = adata.uns["juzi_keep_prune"].copy()
-        sim_before   = adata.uns["juzi_keep_similarity"].copy()
+        sim_before = adata.uns["juzi_keep_similarity"].copy()
         jz.gp.programs_remove(adata, clusters=[0])
-        np.testing.assert_array_equal(adata.uns["juzi_keep_prune"],      prune_before)
+        np.testing.assert_array_equal(adata.uns["juzi_keep_prune"], prune_before)
         np.testing.assert_array_equal(adata.uns["juzi_keep_similarity"], sim_before)
 
     def test_remove_multiple_programs(self):
-        adata    = make_adata()
+        adata = make_adata()
         n_before = len(np.unique(adata.uns["juzi_cluster_labels"]))
         if n_before < 3:
             pytest.skip(f"Need at least 3 programs, got {n_before}.")
         jz.gp.programs_remove(adata, clusters=[0, 1])
-        n_after  = len(np.unique(adata.uns["juzi_cluster_labels"]))
+        n_after = len(np.unique(adata.uns["juzi_cluster_labels"]))
         assert n_after == n_before - 2
 
     def test_copy_false_modifies_inplace(self):
-        adata    = make_adata()
+        adata = make_adata()
         n_before = len(np.unique(adata.uns["juzi_cluster_labels"]))
-        result   = jz.gp.programs_remove(adata, clusters=[0], copy=False)
+        result = jz.gp.programs_remove(adata, clusters=[0], copy=False)
         assert result is None
         assert len(np.unique(adata.uns["juzi_cluster_labels"])) == n_before - 1
 
     def test_copy_true_returns_new_object(self):
-        adata    = make_adata()
+        adata = make_adata()
         n_before = len(np.unique(adata.uns["juzi_cluster_labels"]))
-        result   = jz.gp.programs_remove(adata, clusters=[0], copy=True)
+        result = jz.gp.programs_remove(adata, clusters=[0], copy=True)
         assert result is not None
         # Original unchanged
         assert len(np.unique(adata.uns["juzi_cluster_labels"])) == n_before
@@ -577,7 +578,7 @@ class TestProgramsRemove:
     def test_cluster_samples_keys_match_labels(self):
         adata = make_adata()
         jz.gp.programs_remove(adata, clusters=[0])
-        labels  = np.unique(adata.uns["juzi_cluster_labels"]).tolist()
+        labels = np.unique(adata.uns["juzi_cluster_labels"]).tolist()
         samples = adata.uns["juzi_cluster_samples"]
         assert set(samples.keys()) == set(labels)
 
