@@ -43,7 +43,7 @@ def make_adata(
     )
 
     adata = jz.gp.nmf_fit(
-        adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed
+        adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed, center=False
     )
     jz.gp.similarity_compute(adata, distance="jaccard", top_k=20, use_combined=True)
     jz.gp.programs_cluster(adata, threshold=0.3, min_cluster=2)

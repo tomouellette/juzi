@@ -37,7 +37,7 @@ def make_adata(
     )
 
     adata = jz.gp.nmf_fit(
-        adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed
+        adata, key="donor_id", k=k, min_cells=10, genes=None, seed=seed, center=False
     )
     jz.gp.similarity_compute(
         adata,
@@ -69,7 +69,13 @@ def make_adata_similarity(seed: int = 42) -> AnnData:
         var={"gene_name": np.arange(100).astype(str)},
     )
     adata = jz.gp.nmf_fit(
-        adata, key="donor_id", k=[2, 3], min_cells=10, genes=None, seed=seed
+        adata,
+        key="donor_id",
+        k=[2, 3],
+        min_cells=10,
+        genes=None,
+        seed=seed,
+        center=False,
     )
     jz.gp.similarity_compute(adata, distance="jaccard", top_k=20)
     return adata
