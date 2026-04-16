@@ -424,7 +424,7 @@ import juzi as jz
 adata = sc.read_h5ad("data.h5ad")
 sc.pp.highly_variable_genes(adata, n_top_genes=3000)
 
-# ── NMF ───────────────────────────────────────────────────────────────────────
+# NMF
 
 adata = jz.gp.nmf_fit(
     adata,
@@ -437,13 +437,13 @@ adata = jz.gp.nmf_fit(
 )
 jz.gp.nmf_prune(adata, top_k=50, min_similarity=0.1, min_k=1)
 
-# ── Similarity ────────────────────────────────────────────────────────────────
+# Similarity
 
 jz.gp.similarity_compute(adata, distance="jaccard", top_k=50, intra_sample=False)
 ax_ret, ax_hist = jz.pl.similarity(adata)
 jz.gp.similarity_filter(adata, min_similarity=0.2)
 
-# ── Programs ──────────────────────────────────────────────────────────────────
+# Programs
 
 optimal = jz.gp.programs_threshold(adata, min_cluster=3, metric="ratio")
 ax      = jz.pl.programs_threshold(adata)
@@ -469,7 +469,7 @@ jz.gp.programs_jackknife(adata, n_top_genes=50)   # rerun on final programs
 jz.gp.programs_annotate(adata, gene_sets=jz.mg.Hallmark3CA().as_dict())
 ax = jz.pl.programs_annotate(adata, top_n=10, padj_thresh=0.05)
 
-# ── Score ─────────────────────────────────────────────────────────────────────
+# Score
 
 jz.gp.score_cells(adata, n_top_genes=50, seed=42)
 fig = jz.pl.score_embedding(adata, basis="X_umap")
@@ -480,7 +480,7 @@ jz.gp.score_aggregate(adata, key="sample_id", obs_cols=["age", "study_id"])
 jz.gp.score_associate(adata, formula="age + (1|study_id)")
 ax = jz.pl.score_associate(adata, padj_thresh=0.05)
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
+# Utilities
 
 df_loadings = jz.ut.factors_loadings(adata, kept_only=True)
 df_scores   = jz.ut.factors_scores(adata, kept_only=True)
@@ -491,33 +491,33 @@ df_compare  = jz.ut.programs_compare(adata_a, adata_b, n_top_genes=50)
 
 ## Alternative use cases
 
-**Spatial transcriptomics — programs recurring across slides or regions**
+**Spatial transcriptomics (programs recurring across slides or regions)**
 
 ```python
 # key = slide ID or spatial region annotation
 adata = jz.gp.nmf_fit(adata, key="slide_id", k=[5, 6, 7], min_cells=50)
 ```
 
-**Tumour biopsies — programs recurring across regions from the same patient**
+**Tumour biopsies (programs recurring across regions from the same patient)**
 
 ```python
 adata = jz.gp.nmf_fit(adata, key="biopsy_id", k=[5, 6, 7, 8], min_cells=20)
 ```
 
-**Time course — programs recurring across time points**
+**Time course (programs recurring across time points)**
 
 ```python
 adata = jz.gp.nmf_fit(adata, key="time_point", k=[4, 5, 6], min_cells=100)
 ```
 
-**Cell type subsets — T cell states recurring across donors**
+**Cell type subsets (T cell states recurring across donors)**
 
 ```python
 t_cells = adata[adata.obs["cell_type"] == "T cell"].copy()
 t_cells = jz.gp.nmf_fit(t_cells, key="donor_id", k=[5, 6, 7], min_cells=10)
 ```
 
-**Cross-dataset comparison — programs shared across cohorts**
+**Cross-dataset comparison (programs shared across cohorts)**
 
 ```python
 programs_a = jz.ut.programs_genes(adata_cohort_a, n_top_genes=50)
