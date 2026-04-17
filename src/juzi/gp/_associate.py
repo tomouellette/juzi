@@ -13,7 +13,7 @@ try:
     import statsmodels.formula.api as smf
 except ImportError:
     raise ImportError(
-        "statsmodels is required for juzi.gp.associate. "
+        "statsmodels is required for juzi.gp.score_associate. "
         "Install it with: pip install statsmodels"
     )
 
@@ -27,7 +27,7 @@ def score_associate(
     silent: bool = False,
     copy: bool = False,
 ) -> AnnData | None:
-    """Test association between consensus program scores and covariates.
+    """Test association between aggregated program scores and covariates.
 
     For each consensus program, fits a linear mixed model of the form:
 
@@ -39,11 +39,14 @@ def score_associate(
     grouping variable. Program scores are standardised before fitting so
     beta coefficients are comparable across programs.
 
+    If no random effect terms are present, or if the random-effect grouping
+    structure is degenerate, the function falls back to OLS.
+
     Parameters
     ----------
     adata : AnnData
         AnnData object with juzi_aggregate_scores in .uns, produced by
-        juzi.gp.aggregate.
+        juzi.gp.score_aggregate.
     formula : str
         R-style formula string for the right-hand side of the model.
         Fixed effects follow standard patsy syntax. Random intercepts
@@ -70,10 +73,11 @@ def score_associate(
     Returns
     -------
     AnnData | None
-        AnnData with the following field populated:
+        AnnData with the following fields populated:
             .uns["juzi_association"] : DataFrame with one row per program
-                containing beta, se, pval, padj for the first fixed effect
+                containing beta, se, pval, padj for the first fixed-effect
                 covariate in the formula, plus model metadata.
+            .uns["juzi_association_meta"] : dict with model metadata
     """
     adata = adata.copy() if copy else adata
 
@@ -81,14 +85,14 @@ def score_associate(
 
     if "juzi_aggregate_scores" not in adata.uns:
         raise KeyError(
-            "'juzi_aggregate_scores' not found in .uns. " "Run juzi.gp.aggregate first."
+            "'juzi_aggregate_scores' not found in .uns. "
+            "Run juzi.gp.score_aggregate first."
         )
 
     if not isinstance(formula, str) or not formula.strip():
         raise ValueError("formula must be a non-empty string.")
 
-    if padj_method not in multipletests.__doc__:
-        pass  # let multipletests raise its own error
+    # Let multipletests raise on invalid methods later if needed
 
     # Parse formula
 
@@ -97,7 +101,7 @@ def score_associate(
     if not fixed_formula.strip():
         raise ValueError(
             "No fixed effects remain after parsing random effects. "
-            "Provide at least one fixed effect covariate."
+            "Provide at least one fixed-effect covariate."
         )
 
     df = adata.uns["juzi_aggregate_scores"].copy()
@@ -108,7 +112,7 @@ def score_associate(
     if missing:
         raise KeyError(
             f"The following variables are not in juzi_aggregate_scores: "
-            f"{missing}. Check your formula and obs_cols in juzi.gp.aggregate."
+            f"{missing}. Check your formula and obs_cols in juzi.gp.score_aggregate."
         )
 
     # Build grouping variable
@@ -121,7 +125,6 @@ def score_associate(
         if len(group_vars) == 1:
             groups = df[group_vars[0]].astype(str)
         else:
-            # Interaction of all grouping variables
             groups = df[group_vars[0]].astype(str)
             for gv in group_vars[1:]:
                 groups = groups + "_" + df[gv].astype(str)
@@ -136,8 +139,10 @@ def score_associate(
                 stacklevel=2,
             )
             use_lmm = False
+            groups = None
 
     # Identify program columns
+    # score_aggregate stores programs as P0, P1, ...
 
     program_cols = [c for c in df.columns if re.match(r"^P\d+$", c)]
 
@@ -146,10 +151,14 @@ def score_associate(
             "No program columns (P0, P1, ...) found in juzi_aggregate_scores."
         )
 
-    # Identify primary covariate for result extraction
-    # First term in fixed formula after stripping interactions/transformations
+    fixed_vars = _extract_vars(fixed_formula)
+    if len(fixed_vars) == 0:
+        raise ValueError(
+            "Could not extract any fixed-effect covariates from the formula."
+        )
 
-    primary_covariate = _extract_vars(fixed_formula)[0]
+    # First fixed-effect covariate is the one reported in output
+    primary_covariate = fixed_vars[0]
 
     # Fit model per program
 
@@ -181,9 +190,9 @@ def score_associate(
                             data=df,
                             groups=groups,
                         ).fit(reml=reml, method=method)
+                        model_name = "lmm"
                     except (np.linalg.LinAlgError, Exception) as lmm_error:
                         if "singular" in str(lmm_error).lower():
-                            # Fall back to OLS when LMM covariance is singular
                             if not silent:
                                 warnings.warn(
                                     f"LMM singular for {prog}, falling back to OLS.",
@@ -194,6 +203,7 @@ def score_associate(
                                 formula=full_formula,
                                 data=df,
                             ).fit()
+                            model_name = "ols"
                         else:
                             raise
                 else:
@@ -201,8 +211,8 @@ def score_associate(
                         formula=full_formula,
                         data=df,
                     ).fit()
+                    model_name = "ols"
 
-            # Extract primary covariate result
             beta = fit.params.get(primary_covariate, np.nan)
             se = fit.bse.get(primary_covariate, np.nan)
             pval = fit.pvalues.get(primary_covariate, np.nan)
@@ -215,7 +225,7 @@ def score_associate(
                     "se": se,
                     "pval": pval,
                     "n_obs": len(df),
-                    "model": "lmm" if use_lmm else "ols",
+                    "model": model_name,
                     "groups": "_x_".join(group_vars) if group_vars else None,
                 }
             )
@@ -230,7 +240,7 @@ def score_associate(
 
     if len(results) == 0:
         raise ValueError(
-            "No models were successfully fitted. " "Check your formula and data."
+            "No models were successfully fitted. Check your formula and data."
         )
 
     # FDR correction
@@ -241,7 +251,8 @@ def score_associate(
 
     if valid_mask.any():
         _, padj_valid, _, _ = multipletests(
-            assoc_df.loc[valid_mask, "pval"], method=padj_method
+            assoc_df.loc[valid_mask, "pval"],
+            method=padj_method,
         )
         padj[valid_mask.values] = padj_valid
 
@@ -249,6 +260,15 @@ def score_associate(
     assoc_df = assoc_df.sort_values("padj").reset_index(drop=True)
 
     adata.uns["juzi_association"] = assoc_df
+    adata.uns["juzi_association_meta"] = {
+        "formula": formula,
+        "fixed_formula": fixed_formula,
+        "group_vars": group_vars,
+        "method": method,
+        "reml": reml,
+        "padj_method": padj_method,
+        "n_programs_tested": int(len(assoc_df)),
+    }
 
     return adata if copy else None
 
@@ -273,7 +293,6 @@ def _parse_formula(formula: str) -> tuple[str, list[str]]:
     groups = re_term.findall(formula)
     cleaned = re_term.sub("", formula)
 
-    # Remove consecutive or leading/trailing + operators left by substitution
     cleaned = re.sub(r"\+\s*\+", "+", cleaned)
     cleaned = re.sub(r"^\s*\+|\+\s*$", "", cleaned)
     cleaned = cleaned.strip()
@@ -297,12 +316,10 @@ def _extract_vars(formula: str) -> list[str]:
     list[str]
         Variable names in order of appearance, deduplicated.
     """
-    # Remove known function wrappers — C(), np.fn(), Q()
     cleaned = re.sub(r"\bC\s*\(([^)]+)\)", r"\1", formula)
     cleaned = re.sub(r"\bnp\.\w+\s*\([^)]+\)", "", cleaned)
     cleaned = re.sub(r"\bQ\s*\([^)]+\)", "", cleaned)
 
-    # Split on operators and extract word tokens
     tokens = re.split(r"[\+\*\:\|~\s]+", cleaned)
     seen, vars_ = set(), []
     for t in tokens:

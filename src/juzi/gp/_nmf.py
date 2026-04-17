@@ -127,7 +127,7 @@ def nmf_fit(
             .uns["juzi_keep_cluster"]    : boolean mask, all True (set by cluster)
             .uns["juzi_keep"]            : intersection of all three masks
             .varm["juzi_G"]              : gene × factors loading matrix
-            .obsm["juzi_scores"]         : cell × factors score matrix (if keep_scores)
+            .obsm["juzi_scores"]         : cell × factors score matrix (if keep_scores; only intra-sample scores)
     """
     # Validate
 
@@ -365,7 +365,7 @@ def _nmf(
 
     if log1p:
         X = np.log1p(X)
- 
+
     q = np.quantile(X, clip_quantile)
     X = np.clip(X, 0, q)
 
@@ -373,7 +373,6 @@ def _nmf(
         gene_means = X.mean(axis=0, keepdims=True)
         X = X - gene_means
         X = np.maximum(X, 0.0)
-
 
     H_list, W_list = [], []
 

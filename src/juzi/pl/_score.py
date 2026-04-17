@@ -35,7 +35,7 @@ def score_embedding(
     ----------
     adata : AnnData
         AnnData object with juzi_program_scores in .obsm, produced by
-        juzi.gp.score, and a 2D embedding in .obsm[basis].
+        juzi.gp.score_cells, and a 2D embedding in .obsm[basis].
     basis : str
         Key in adata.obsm containing the 2D embedding coordinates.
         Common values: "X_umap", "X_tsne", "X_pca".
@@ -76,7 +76,7 @@ def score_embedding(
     if "juzi_program_scores" not in adata.obsm:
         raise KeyError(
             "'juzi_program_scores' not found in .obsm. "
-            "Run juzi.gp.score before plotting."
+            "Run juzi.gp.score_cells before plotting."
         )
 
     if basis not in adata.obsm:
@@ -85,22 +85,27 @@ def score_embedding(
             "Check your basis argument or compute an embedding first."
         )
 
-    if "juzi_cluster_labels" not in adata.uns:
-        raise KeyError(
-            "'juzi_cluster_labels' not found in .uns. "
-            "Run juzi.gp.cluster before plotting."
-        )
-
-    embedding = adata.obsm[basis]
-    if embedding.shape[1] < 2:
+    embedding = np.asarray(adata.obsm[basis])
+    if embedding.ndim != 2 or embedding.shape[1] < 2:
         raise ValueError(f"Embedding '{basis}' must have at least 2 dimensions.")
 
     # Setup
 
-    program_scores = adata.obsm["juzi_program_scores"]  # (n_cells × n_programs)
+    program_scores = np.asarray(adata.obsm["juzi_program_scores"], dtype=float)
+    if program_scores.ndim != 2:
+        raise ValueError("'juzi_program_scores' must be a 2D array.")
+
     n_programs = program_scores.shape[1]
-    labels = adata.uns["juzi_cluster_labels"]
-    unique_C = np.unique(labels)
+
+    # Program labels: prefer cluster labels if available, otherwise use P#
+    if "juzi_cluster_labels" in adata.uns:
+        unique_C = np.unique(np.asarray(adata.uns["juzi_cluster_labels"]))
+        if len(unique_C) == n_programs:
+            prog_labels = [f"C{int(c)}" for c in unique_C]
+        else:
+            prog_labels = [f"P{i}" for i in range(n_programs)]
+    else:
+        prog_labels = [f"P{i}" for i in range(n_programs)]
 
     coords_x = embedding[:, 0]
     coords_y = embedding[:, 1]
@@ -110,12 +115,17 @@ def score_embedding(
     all_scores = program_scores.ravel()
     all_scores = all_scores[np.isfinite(all_scores)]
 
+    if len(all_scores) == 0:
+        raise ValueError("juzi_program_scores contains no finite values.")
+
     if vmin is None:
         vmin = float(np.percentile(all_scores, 1))
     if vmax is None:
         vmax = float(np.percentile(all_scores, 99))
 
-    # Use TwoSlopeNorm if vcenter is within [vmin, vmax]
+    if vmin == vmax:
+        vmax = vmin + 1e-6
+
     if vmin < vcenter < vmax:
         norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
     else:
@@ -128,22 +138,18 @@ def score_embedding(
 
     if figsize is None:
         panel_size = 2.0
-        cbar_w = 0.3 if show_colorbar else 0.0
-        figsize = (panel_size * n_cols + cbar_w, panel_size * n_rows)
+        extra_w = 0.45 if show_colorbar else 0.0
+        figsize = (panel_size * n_cols + extra_w, panel_size * n_rows)
 
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=figsize,
-        constrained_layout=True,
-    )
-
-    axes_flat = np.array(axes).flatten() if n_programs > 1 else [axes]
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+    axes_flat = np.atleast_1d(axes).ravel()
 
     # Plot each program
 
     sc = None
-    for i, (c, ax) in enumerate(zip(unique_C, axes_flat)):
+    basis_label = basis.replace("X_", "").upper()
+
+    for i, ax in enumerate(axes_flat[:n_programs]):
         prog_scores = program_scores[:, i]
 
         sc = ax.scatter(
@@ -158,7 +164,7 @@ def score_embedding(
         )
 
         ax.set_title(
-            f"C{int(c)}",
+            prog_labels[i],
             fontsize=fontsize,
             pad=3,
         )
@@ -166,8 +172,6 @@ def score_embedding(
         ax.set_xticks([])
         ax.set_yticks([])
 
-        # Axis label showing basis name
-        basis_label = basis.replace("X_", "").upper()
         ax.set_xlabel(f"{basis_label} 1", fontsize=fontsize - 1)
         ax.set_ylabel(f"{basis_label} 2", fontsize=fontsize - 1)
 
@@ -183,17 +187,13 @@ def score_embedding(
     # Shared colorbar
 
     if show_colorbar and sc is not None:
-        cbar_ax = fig.add_axes(
-            [
-                1.01,
-                0.15,
-                0.02,
-                0.7,
-            ]
-        )
+        fig.subplots_adjust(right=0.92)
+        cbar_ax = fig.add_axes([0.94, 0.15, 0.02, 0.7])
         cbar = fig.colorbar(sc, cax=cbar_ax, orientation="vertical")
         cbar.ax.tick_params(labelsize=fontsize - 1, length=2)
         cbar.outline.set_visible(False)
         cbar.set_label(colorbar_label, fontsize=fontsize, labelpad=4)
+    else:
+        fig.tight_layout()
 
     return fig

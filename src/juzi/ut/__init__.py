@@ -2,4 +2,4 @@
 # Licensed under the BSD 3-Clause License
 
 from ._factors import factor_loadings, factor_scores
-from ._programs import program_genes, program_compare, program_donors
+from ._programs import programs_genes, programs_compare, programs_donors

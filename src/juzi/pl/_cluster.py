@@ -56,7 +56,7 @@ def programs_threshold(
     if "juzi_threshold_sweep" not in adata.uns:
         raise KeyError(
             "'juzi_threshold_sweep' not found in .uns. "
-            "Run juzi.gp.select_threshold first."
+            "Run juzi.gp.programs_threshold first."
         )
 
     # Extract sweep results

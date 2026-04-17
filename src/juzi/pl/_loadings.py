@@ -8,13 +8,9 @@ import matplotlib.pyplot as plt
 from anndata import AnnData
 from typing import Dict, Tuple
 
-from juzi.gp._nmf import _combined_score
-
 
 def programs_loadings(
     adata: AnnData,
-    n_top_genes: int = 10,
-    use_combined: bool = False,
     figsize: Tuple[float, float] | None = None,
     palette: Dict[int, str] | None = None,
     fontsize: int = 8,
@@ -22,26 +18,26 @@ def programs_loadings(
     ncols: int = 4,
     show_values: bool = False,
 ) -> plt.Figure:
-    """Plot top gene loadings per consensus program as horizontal bar charts.
+    """Plot canonical program genes with centroid-based loading magnitudes.
 
-    Genes are selected and displayed using the combined loading × specificity
-    score when use_combined=True, matching the ranking used in
-    juzi.ut.program_genes and juzi.gp.score.
+    Genes displayed are the canonical gene sets from juzi_cluster_genes,
+    computed at cluster time by juzi.gp.programs_cluster. For centroid mode
+    these are typically top genes by combined score; for progressive mode
+    these are the MP genes.
+
+    Bar lengths reflect the corresponding values in juzi_cluster_G,
+    normalised to [0, 1] within each program for display.
 
     Parameters
     ----------
     adata : AnnData
-        AnnData object with juzi_cluster_G and juzi_cluster_labels in .uns.
-    n_top_genes : int
-        Number of top genes to display per program.
-    use_combined : bool
-        If True, rank and display genes by combined loading × specificity
-        score. Bar length reflects normalised combined score. If False,
-        rank and display by raw loading magnitude.
+        AnnData object with juzi_cluster_genes, juzi_cluster_G,
+        juzi_cluster_labels, and juzi_G_genes in .uns, produced by
+        juzi.gp.programs_cluster.
     figsize : Tuple[float, float] | None
         Figure size in inches. If None, inferred automatically.
     palette : Dict[int, str] | None
-        Cluster label to colour mapping. If None, generated via glasbey.
+        Program label to colour mapping. If None, generated via glasbey.
     fontsize : int
         Font size for all text elements.
     bar_height : float
@@ -49,37 +45,50 @@ def programs_loadings(
     ncols : int
         Number of columns in the figure grid.
     show_values : bool
-        If True, annotate each bar with its score value.
+        If True, annotate each bar with its normalised loading value.
 
     Returns
     -------
     plt.Figure
         The matplotlib Figure object.
     """
-    for field in ["juzi_cluster_G", "juzi_cluster_labels"]:
+    # Validate
+
+    for field in [
+        "juzi_cluster_genes",
+        "juzi_cluster_G",
+        "juzi_cluster_labels",
+        "juzi_G_genes",
+    ]:
         if field not in adata.uns:
             raise KeyError(
                 f"'{field}' not found in .uns. "
-                "Run juzi.gp.cluster before plotting loadings."
+                "Run juzi.gp.programs_cluster before plotting loadings."
             )
-
-    if "juzi_G_genes" not in adata.uns:
-        raise KeyError("'juzi_G_genes' not found in .uns. Run juzi.gp.nmf first.")
-
-    if n_top_genes < 1:
-        raise ValueError("n_top_genes must be >= 1.")
 
     # Setup
 
-    G = adata.uns["juzi_cluster_G"]
-    gene_names = np.array(adata.uns["juzi_G_genes"])
-    labels = adata.uns["juzi_cluster_labels"]
+    cluster_genes = adata.uns["juzi_cluster_genes"]
+    G = np.asarray(adata.uns["juzi_cluster_G"])  # (n_programs x n_genes)
+    gene_names = np.array(adata.uns["juzi_G_genes"], dtype=object)
+    labels = np.array(adata.uns["juzi_cluster_labels"])
     unique_C = np.unique(labels)
     n_programs = len(unique_C)
 
-    if n_top_genes > G.shape[1]:
+    if G.shape[0] != n_programs:
         raise ValueError(
-            f"n_top_genes={n_top_genes} exceeds number of genes ({G.shape[1]})."
+            "juzi_cluster_G row count does not match the number of unique "
+            "cluster labels."
+        )
+
+    gene_to_idx = {g: i for i, g in enumerate(gene_names)}
+
+    # Infer max genes to display from canonical program gene sets
+    n_top_genes = max(len(cluster_genes.get(int(c), [])) for c in unique_C)
+
+    if n_top_genes == 0:
+        raise ValueError(
+            "juzi_cluster_genes is empty. Re-run juzi.gp.programs_cluster."
         )
 
     # Palette
@@ -92,22 +101,6 @@ def programs_loadings(
         )
         palette = {int(c): colors[i] for i, c in enumerate(unique_C)}
 
-    # Gene ranking and display scores
-    # Ranking selects which genes to show.
-    # Display normalises within program to [0, 1] for bar length.
-    # Both use the same quantity so bars directly reflect ranking.
-
-    if use_combined:
-        G_rank = _combined_score(G)
-        xlabel = "Normalised specificity × loading"
-    else:
-        G_rank = G
-        xlabel = "Normalised loading"
-
-    G_rank_max = G_rank.max(axis=1, keepdims=True)
-    G_rank_max[G_rank_max == 0] = 1
-    G_display = G_rank / G_rank_max  # (n_programs × n_genes) in [0, 1]
-
     # Figure layout
 
     n_cols = min(n_programs, ncols)
@@ -119,28 +112,69 @@ def programs_loadings(
         figsize = (panel_w * n_cols, panel_h * n_rows)
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
-    axes_flat = np.array(axes).flatten() if n_programs > 1 else [axes]
+    axes_flat = np.atleast_1d(axes).ravel()
 
     # Plot each program
 
     for i, (c, ax) in enumerate(zip(unique_C, axes_flat)):
         color = palette[int(c)]
+        genes = list(cluster_genes.get(int(c), []))
 
-        top_idx = np.argsort(G_rank[i])[-n_top_genes:][::-1]
-        top_genes = gene_names[top_idx]
-        top_vals = G_display[i][top_idx]
+        if len(genes) == 0:
+            ax.text(
+                0.5,
+                0.5,
+                f"C{int(c)}\n(no genes)",
+                ha="center",
+                va="center",
+                fontsize=fontsize,
+                color=color,
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            continue
 
-        y_pos = np.arange(n_top_genes)
+        present_genes = [g for g in genes if g in gene_to_idx]
+
+        if len(present_genes) == 0:
+            ax.text(
+                0.5,
+                0.5,
+                f"C{int(c)}\n(no mapped genes)",
+                ha="center",
+                va="center",
+                fontsize=fontsize,
+                color=color,
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            continue
+
+        gene_idx = np.array([gene_to_idx[g] for g in present_genes], dtype=int)
+
+        # Use canonical gene order from cluster time
+        raw_vals = G[i, gene_idx]
+
+        # Normalise to [0, 1] within program for display
+        max_val = raw_vals.max()
+        if max_val == 0:
+            max_val = 1.0
+        disp_vals = raw_vals / max_val
+
+        n_genes = len(present_genes)
+        y_pos = np.arange(n_genes)
+
+        # Reverse so top-ranked gene appears at top
         ax.barh(
             y_pos,
-            top_vals[::-1],
+            disp_vals[::-1],
             height=bar_height,
             color=color,
             edgecolor="none",
         )
 
         if show_values:
-            for y, v in zip(y_pos, top_vals[::-1]):
+            for y, v in zip(y_pos, disp_vals[::-1]):
                 ax.text(
                     v + 0.01,
                     y,
@@ -152,9 +186,13 @@ def programs_loadings(
                 )
 
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(top_genes[::-1], fontsize=fontsize, style="italic")
+        ax.set_yticklabels(
+            present_genes[::-1],
+            fontsize=fontsize,
+            style="italic",
+        )
         ax.set_xlim(0, 1.05)
-        ax.set_xlabel(xlabel, fontsize=fontsize)
+        ax.set_xlabel("Normalised loading", fontsize=fontsize)
         ax.tick_params(axis="x", length=2, labelsize=fontsize)
         ax.tick_params(axis="y", length=0)
         ax.set_title(

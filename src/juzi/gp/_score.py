@@ -28,15 +28,14 @@ def score_cells(
 ) -> AnnData | None:
     """Score cells on each consensus gene program using a control-subtracted mean.
 
-    For each consensus program, the top n_top_genes genes are selected by
-    either raw loading magnitude or specificity (loading relative to other
-    programs). Per-cell scores are computed as the mean expression of the
-    program genes minus the mean expression of a matched set of control genes
-    drawn from similar expression bins, following Tirosh et al. 2016.
+    Program genes are taken primarily from `adata.uns["juzi_cluster_genes"]`,
+    which is the canonical program definition for both centroid and progressive
+    clustering modes. If `juzi_cluster_genes` is absent, the function falls
+    back to deriving genes from `juzi_cluster_G`.
 
-    Scores are stored per program as columns in obsm["juzi_program_scores"]
-    and are comparable across programs and donors since the control subtraction
-    removes background expression level variation.
+    Per-cell scores are computed as the mean expression of the program genes
+    minus the mean expression of a matched set of control genes drawn from
+    similar expression bins, following Tirosh et al. 2016.
 
     Parameters
     ----------
@@ -45,12 +44,13 @@ def score_cells(
         or the specified layer. Must share gene names with the genes used
         during juzi.gp.nmf.
     n_top_genes : int
-        Number of top genes per program used for scoring.
+        Maximum number of genes per program used for scoring. If canonical
+        program genes are present, the first `n_top_genes` are used. If the
+        function falls back to `juzi_cluster_G`, the top `n_top_genes` genes
+        are derived from cluster loadings.
     use_combined : bool
-        If True, rank genes by specificity score (loading in this program
-        divided by total loading across all programs) rather than raw loading
-        magnitude. Specificity-ranked genes are more discriminative between
-        programs and produce cleaner scores.
+        Only used when falling back to `juzi_cluster_G`. If True, rank genes
+        by specificity score rather than raw loading magnitude.
     n_control_genes : int
         Number of control genes per program gene used for background
         subtraction. Control genes are drawn from the same expression bin
@@ -58,10 +58,11 @@ def score_cells(
         n_top_genes × n_control_genes, deduplicated.
     gene_pool : List[str] | None
         Genes eligible to serve as control genes. Defaults to all genes
-        in adata.var_names. Program genes are excluded from the control pool.
+        in adata. Program genes are excluded from the control pool.
     gene_names_col : str | None
-        Column in adata.var containing gene names. Must match the
-        gene_names_col used in juzi.gp.nmf. If None, adata.var_names is used.
+        Column in adata.var containing gene names. Must match the namespace
+        of the genes used in juzi.gp.nmf / clustering. If None, var_names
+        is used.
     layer : str | None
         Layer containing normalised log expression values. If None, uses .X.
     seed : int
@@ -76,22 +77,29 @@ def score_cells(
     AnnData | None
         AnnData with the following fields populated:
             .obsm["juzi_program_scores"] : (n_cells × n_programs) score matrix
-            .uns["juzi_program_genes"]   : dict mapping program index to top genes
+            .uns["juzi_program_genes"]   : dict mapping program index to genes used
+            .uns["juzi_score_meta"]      : scoring parameter metadata
     """
     adata = adata.copy() if copy else adata
 
     # Validate
 
-    for field, store in [
-        ("juzi_cluster_G", "uns"),
-        ("juzi_cluster_labels", "uns"),
-        ("juzi_G_genes", "uns"),
-    ]:
-        if field not in getattr(adata, store):
-            raise KeyError(
-                f"'{field}' not found in .{store}. "
-                "Run juzi.gp.nmf, juzi.gp.similarity, juzi.gp.cluster first."
-            )
+    if "juzi_cluster_genes" not in adata.uns and "juzi_cluster_G" not in adata.uns:
+        raise KeyError(
+            "Neither 'juzi_cluster_genes' nor 'juzi_cluster_G' found in .uns. "
+            "Run juzi.gp.programs_cluster first."
+        )
+
+    if "juzi_cluster_labels" not in adata.uns:
+        raise KeyError(
+            "'juzi_cluster_labels' not found in .uns. "
+            "Run juzi.gp.programs_cluster first."
+        )
+
+    if "juzi_G_genes" not in adata.uns:
+        raise KeyError(
+            "'juzi_G_genes' not found in .uns. " "Run juzi.gp.nmf_fit first."
+        )
 
     if n_top_genes < 1:
         raise ValueError("n_top_genes must be >= 1.")
@@ -108,7 +116,7 @@ def score_cells(
             "Check your gene_names_col argument."
         )
 
-    # Extract gene names
+    # Extract cell gene names
 
     cell_genes = (
         adata.var[gene_names_col].to_numpy()
@@ -116,9 +124,9 @@ def score_cells(
         else adata.var_names.to_numpy()
     )
 
-    nmf_genes = np.array(adata.uns["juzi_G_genes"])
+    nmf_genes = np.array(adata.uns["juzi_G_genes"], dtype=object)
 
-    # Align genes
+    # Align genes between adata and NMF/clustering gene namespace
 
     shared_genes = np.intersect1d(nmf_genes, cell_genes)
     n_shared = len(shared_genes)
@@ -148,21 +156,11 @@ def score_cells(
     nmf_gene_to_idx = {g: i for i, g in enumerate(nmf_genes)}
     cell_gene_to_idx = {g: i for i, g in enumerate(cell_genes)}
 
-    shared_nmf_idx = np.array([nmf_gene_to_idx[g] for g in shared_genes])
-    shared_cell_idx = np.array([cell_gene_to_idx[g] for g in shared_genes])
-
-    # H aligned to shared genes: (n_programs × n_shared_genes)
-    H_full = adata.uns["juzi_cluster_G"]
-    H_aligned = H_full[:, shared_nmf_idx]
-    n_programs = H_aligned.shape[0]
-
     # Extract expression matrix
 
     X = adata.layers[layer] if layer is not None else adata.X
-
     if hasattr(X, "toarray"):
         X = X.toarray()
-
     X = np.array(X, dtype=np.float32)
 
     if X.max() > 40:
@@ -174,15 +172,63 @@ def score_cells(
             stacklevel=2,
         )
 
-    # Expression aligned to shared genes: (n_cells × n_shared_genes)
-    X_aligned = X[:, shared_cell_idx]
+    # Determine program genes
+    # Primary path: canonical cluster genes
+    # Fallback path: derive from juzi_cluster_G
 
-    # Weight by gene specificity
+    program_genes: Dict[int, List[str]] = {}
+    gene_source = "juzi_cluster_genes"
 
-    if use_combined:
-        H_rank = _combined_score(H_aligned)
+    if "juzi_cluster_genes" in adata.uns:
+        cluster_genes = adata.uns["juzi_cluster_genes"]
+
+        # Ensure deterministic program order by sorted program index
+        program_ids = sorted(int(k) for k in cluster_genes.keys())
+
+        for p in program_ids:
+            genes = list(cluster_genes[p])
+
+            # Keep only genes present in both NMF and cell gene spaces
+            genes = [g for g in genes if g in nmf_gene_to_idx and g in cell_gene_to_idx]
+
+            if len(genes) == 0:
+                warnings.warn(
+                    f"Program C{p} has no genes shared with adata and will score as zero.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                program_genes[p] = []
+                continue
+
+            if len(genes) < n_top_genes:
+                warnings.warn(
+                    f"Program C{p} has only {len(genes)} usable genes after alignment; "
+                    f"scoring will use all available genes instead of n_top_genes={n_top_genes}.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                program_genes[p] = genes
+            else:
+                program_genes[p] = genes[:n_top_genes]
+
+        n_programs = len(program_ids)
+
     else:
-        H_rank = H_aligned
+        # Fallback for older objects that do not yet store canonical genes
+        gene_source = "juzi_cluster_G"
+
+        H_full = adata.uns["juzi_cluster_G"]  # (n_programs × n_genes)
+        shared_nmf_idx = np.array([nmf_gene_to_idx[g] for g in shared_genes])
+        H_aligned = H_full[:, shared_nmf_idx]
+        n_programs = H_aligned.shape[0]
+
+        H_rank = _combined_score(H_aligned) if use_combined else H_aligned
+
+        for p in range(n_programs):
+            gene_ranks = H_rank[p]
+            top_local = np.argsort(gene_ranks)[-n_top_genes:][::-1]
+            genes = shared_genes[top_local].tolist()
+            program_genes[p] = genes
 
     # Control gene pool
 
@@ -202,18 +248,20 @@ def score_cells(
 
     rng = np.random.default_rng(seed)
     scores = np.zeros((adata.n_obs, n_programs), dtype=np.float32)
-    program_genes = {}
+    used_program_genes: Dict[int, List[str]] = {}
 
     for p in tqdm(range(n_programs), desc="[juzi] Scoring", disable=silent):
-        # Select top genes by rank (specificity or raw loading)
-        gene_ranks = H_rank[p]
-        top_local = np.argsort(gene_ranks)[-n_top_genes:]
-        top_genes = shared_genes[top_local]
-        top_cell_idx = np.array([cell_gene_to_idx[g] for g in top_genes])
+        genes = program_genes[p]
 
-        program_genes[p] = top_genes.tolist()
+        if len(genes) == 0:
+            used_program_genes[p] = []
+            scores[:, p] = 0.0
+            continue
 
-        # Program score — mean expression of top genes per cell
+        top_cell_idx = np.array([cell_gene_to_idx[g] for g in genes], dtype=int)
+        used_program_genes[p] = genes
+
+        # Program score — mean expression of program genes per cell
         program_score = X[:, top_cell_idx].mean(axis=1)
 
         # Control gene selection — bin-matched, excluding program genes
@@ -222,19 +270,15 @@ def score_cells(
 
         for gene_idx in top_cell_idx:
             gene_bin = gene_bins[gene_idx]
-            bin_members = np.where(
-                (gene_bins == gene_bin)
-                & pool_mask
-                & ~np.isin(np.arange(len(cell_genes)), list(top_cell_idx_set))
-            )[0]
+            eligible = ~np.isin(np.arange(len(cell_genes)), list(top_cell_idx_set))
+
+            bin_members = np.where((gene_bins == gene_bin) & pool_mask & eligible)[0]
 
             # Fall back to adjacent bins if current bin has no eligible genes
             if len(bin_members) == 0:
                 for delta in [1, -1, 2, -2, 3, -3]:
                     adjacent = np.where(
-                        (gene_bins == gene_bin + delta)
-                        & pool_mask
-                        & ~np.isin(np.arange(len(cell_genes)), list(top_cell_idx_set))
+                        (gene_bins == gene_bin + delta) & pool_mask & eligible
                     )[0]
                     if len(adjacent) > 0:
                         bin_members = adjacent
@@ -255,7 +299,17 @@ def score_cells(
         scores[:, p] = program_score - control_score
 
     adata.obsm["juzi_program_scores"] = scores
-    adata.uns["juzi_program_genes"] = program_genes
+    adata.uns["juzi_program_genes"] = used_program_genes
+    adata.uns["juzi_score_meta"] = {
+        "n_top_genes": n_top_genes,
+        "use_combined": use_combined,
+        "n_control_genes": n_control_genes,
+        "gene_pool_provided": gene_pool is not None,
+        "gene_names_col": gene_names_col,
+        "layer": layer,
+        "seed": seed,
+        "gene_source": gene_source,
+    }
 
     return adata if copy else None
 
@@ -275,69 +329,8 @@ def score_classify(
 ) -> AnnData | None:
     """Classify cells into consensus programs using a permutation null.
 
-    Generates null score distributions by shuffling expression values
-    per gene across randomly subsampled cells, scoring the shuffled
-    matrices on the real program gene sets, and fitting a normal
-    distribution to the resulting null scores. Each cell is then
-    classified via a z-test against the null, with BH correction
-    for multiple testing across all program × cell pairs.
-
-    Cells achieving padj < padj_thresh for exactly one program are
-    assigned to that program. Cells achieving padj < padj_thresh for
-    multiple programs are assigned to the program for which they scored
-    maximally. Cells achieving padj < padj_thresh for no program are
-    assigned "unresolved".
-
     Must be run after juzi.gp.score_cells since it reads
     juzi_program_scores and juzi_program_genes.
-
-    Parameters
-    ----------
-    adata : AnnData
-        AnnData object with juzi_program_scores and juzi_program_genes
-        in .obsm and .uns respectively, produced by juzi.gp.score_cells.
-    n_shuffles : int
-        Number of shuffled expression matrices to generate. Each shuffle
-        subsamples n_cells_per_shuffle cells and shuffles expression
-        values per gene. Total null scores per program =
-        n_shuffles × n_cells_per_shuffle.
-    n_cells_per_shuffle : int
-        Number of cells to subsample per shuffle. Does not need to equal
-        the full dataset size — 5000 is sufficient to estimate null
-        distribution parameters for most datasets.
-    padj_thresh : float
-        Adjusted p-value threshold for program assignment. Must be in
-        (0, 1].
-    n_jobs : int
-        Number of parallel workers. Parallelisation is across shuffles.
-    prefer : str
-        Joblib backend preference. "threads" is recommended since the
-        inner scoring loop is numpy-based with no GIL contention.
-    layer : str | None
-        Layer containing normalised log expression. If None, uses .X.
-        Must match the layer used in juzi.gp.score_cells.
-    gene_names_col : str | None
-        Column in adata.var containing gene names. Must match the value
-        used in juzi.gp.score_cells.
-    seed : int
-        Master random seed. Per-shuffle seeds are derived deterministically
-        from this value.
-    silent : bool
-        If True, suppress progress bar.
-    copy : bool
-        If True, return a modified copy. If False, modify in place.
-
-    Returns
-    -------
-    AnnData | None
-        AnnData with the following fields populated:
-            .obsm["juzi_program_pvals"]  : (n_cells × n_programs) raw p-values
-            .obsm["juzi_program_padj"]   : (n_cells × n_programs) BH-adjusted
-            .obs["juzi_program_label"]   : per-cell program assignment or
-                                           "unresolved"
-            .uns["juzi_classify_params"] : dict storing n_shuffles,
-                                           n_cells_per_shuffle, padj_thresh,
-                                           null_mean, null_std per program
     """
     adata = adata.copy() if copy else adata
 
@@ -375,23 +368,30 @@ def score_classify(
         X = X.toarray()
     X = np.array(X, dtype=np.float32)
 
+    if "juzi_score_meta" in adata.uns and gene_names_col is None:
+        gene_names_col = adata.uns["juzi_score_meta"].get(
+            "gene_names_col", gene_names_col
+        )
+
     cell_genes = (
         adata.var[gene_names_col].to_numpy()
         if gene_names_col is not None
         else adata.var_names.to_numpy()
     )
 
-    program_genes = adata.uns["juzi_program_genes"]  # dict: int -> List[str]
+    program_genes = adata.uns["juzi_program_genes"]
     n_programs = len(program_genes)
     n_cells = adata.n_obs
 
     # Map program genes to cell expression indices
     gene_to_idx = {g: i for i, g in enumerate(cell_genes)}
     prog_indices: List[np.ndarray] = []
+
     for p in range(n_programs):
         genes = program_genes[p]
         indices = np.array(
-            [gene_to_idx[g] for g in genes if g in gene_to_idx], dtype=int
+            [gene_to_idx[g] for g in genes if g in gene_to_idx],
+            dtype=int,
         )
         prog_indices.append(indices)
 
@@ -412,8 +412,6 @@ def score_classify(
     n_sample = min(n_cells_per_shuffle, n_cells)
 
     # Run shuffles in parallel
-    # Each shuffle returns a (n_programs,) array of mean scores across
-    # the subsampled shuffled cells
 
     null_scores = Parallel(n_jobs=n_jobs, prefer=prefer)(
         delayed(_score_shuffle)(
@@ -429,30 +427,21 @@ def score_classify(
         )
     )
 
-    # null_scores: list of n_shuffles arrays each (n_programs,)
-    # Stack to (n_shuffles × n_programs)
     null_matrix = np.vstack(null_scores)  # (n_shuffles × n_programs)
 
     # Fit null distribution per program
 
-    null_mean = null_matrix.mean(axis=0)  # (n_programs,)
-    null_std = null_matrix.std(axis=0)  # (n_programs,)
-
-    # Avoid division by zero for programs with zero-variance null
+    null_mean = null_matrix.mean(axis=0)
+    null_std = null_matrix.std(axis=0)
     null_std = np.where(null_std == 0, 1e-8, null_std)
 
     # Compute z-scores and p-values for real cells
 
-    real_scores = adata.obsm["juzi_program_scores"]  # (n_cells × n_programs)
-
-    # z-score each cell against the null for each program
+    real_scores = adata.obsm["juzi_program_scores"]
     z_scores = (real_scores - null_mean[None, :]) / null_std[None, :]
+    pvals = stats.norm.sf(z_scores)
 
-    # One-sided p-value; probability of observing a score this high under null
-    pvals = stats.norm.sf(z_scores)  # (n_cells × n_programs)
-
-    # BH correction across all program by cell pairs
-    # Flatten, correct, reshape
+    # BH correction across all program × cell pairs
 
     flat_pvals = pvals.flatten()
     _, flat_padj, _, _ = multipletests(flat_pvals, method="fdr_bh")
@@ -464,19 +453,16 @@ def score_classify(
     prog_names = [f"C{int(c)}" for c in unique_C]
     labels_out = np.full(n_cells, "unresolved", dtype=object)
 
-    sig_mask = padj < padj_thresh  # (n_cells × n_programs)
-    n_sig = sig_mask.sum(axis=1)  # (n_cells,)
+    sig_mask = padj < padj_thresh
+    n_sig = sig_mask.sum(axis=1)
 
-    # Cells significant for exactly one program
     single_sig = n_sig == 1
     if single_sig.any():
         prog_idx = np.argmax(sig_mask[single_sig], axis=1)
         labels_out[single_sig] = [prog_names[p] for p in prog_idx]
 
-    # Cells significant for multiple programs — assign to max score
     multi_sig = n_sig > 1
     if multi_sig.any():
-        # Mask non-significant scores before taking argmax
         masked_scores = real_scores.copy()
         masked_scores[~sig_mask] = -np.inf
         prog_idx = np.argmax(masked_scores[multi_sig], axis=1)
@@ -505,38 +491,15 @@ def _score_shuffle(
     n_cells: int,
     seed: int,
 ) -> np.ndarray:
-    """Run one shuffle iteration.
-
-    Subsamples n_cells cells, shuffles expression values per gene
-    independently, and scores all programs on the shuffled matrix.
-
-    Parameters
-    ----------
-    X : np.ndarray
-        Full expression matrix (n_cells_total × n_genes), normalised log.
-    prog_indices : List[np.ndarray]
-        List of gene index arrays, one per program.
-    n_cells : int
-        Number of cells to subsample.
-    seed : int
-        Random seed for this shuffle.
-
-    Returns
-    -------
-    np.ndarray
-        Mean score per program across shuffled cells, shape (n_programs,).
-    """
+    """Run one shuffle iteration."""
     rng = np.random.default_rng(seed)
 
-    # Subsample cells
     cell_idx = rng.choice(X.shape[0], size=n_cells, replace=False)
-    X_sub = X[cell_idx].copy()  # (n_cells × n_genes)
+    X_sub = X[cell_idx].copy()
 
-    # Shuffle expression values per gene independently
     for g in range(X_sub.shape[1]):
         X_sub[:, g] = rng.permutation(X_sub[:, g])
 
-    # Score each program — mean expression of program genes per cell
     n_programs = len(prog_indices)
     mean_scores = np.zeros(n_programs, dtype=np.float32)
 

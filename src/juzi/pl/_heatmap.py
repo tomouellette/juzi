@@ -101,7 +101,9 @@ def programs_heatmap(
     for field in ["juzi_cluster_similarity", "juzi_cluster_labels"]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. " "Run juzi.gp.cluster before plotting."
+                f"'{field}' not found in .uns. "
+                "Run juzi.gp.programs_centroid or juzi.gp.programs_progressive "
+                "before plotting."
             )
 
     S = adata.uns["juzi_cluster_similarity"]

@@ -21,18 +21,19 @@ def similarity(
     ax_retention: plt.Axes | None = None,
     ax_hist: plt.Axes | None = None,
 ) -> Tuple[plt.Axes, plt.Axes]:
-    """Plot min_similarity threshold versus factors retained and the
-    maximum similarity distribution per factor.
+    """Plot similarity filtering diagnostics.
 
     Two panels are shown side by side:
+
         Left  — retention curve: number of factors retained at each
-                min_similarity threshold.
+                min_similarity threshold, computed from the current
+                similarity matrix.
+
         Right — histogram of maximum similarity per factor. When
                 show_gmm=True, a two-component Gaussian mixture model
                 is fitted to the distribution and overlaid. The crossover
-                point between the noise and signal components is marked
-                as a suggested threshold. A bimodal distribution indicates
-                a natural gap — the valley is a principled threshold choice.
+                point between the lower- and higher-similarity components
+                is marked as a suggested threshold.
 
     Parameters
     ----------
@@ -53,9 +54,7 @@ def similarity(
     show_gmm : bool
         If True, fit a two-component Gaussian mixture model to the max
         similarity distribution and overlay the component densities and
-        crossover threshold on the histogram. A warning is raised if the
-        two components have similar means, indicating the distribution
-        may not be bimodal and the suggested threshold may be unreliable.
+        crossover threshold on the histogram.
     ax_retention : plt.Axes | None
         Axes for the retention curve. Both ax_retention and ax_hist must
         be provided together or both None.
@@ -79,22 +78,36 @@ def similarity(
     if thresholds is None:
         thresholds = np.linspace(0, 1, 100)
 
-    # Compute max similarity per factor
+    # Compute max similarity per factor in global factor space
 
-    sim = adata.uns["juzi_similarity"]
-    sim_idx = adata.uns["juzi_similarity_idx"]
+    sim = np.array(adata.uns["juzi_similarity"], dtype=float)
+    sim_idx = np.array(adata.uns["juzi_similarity_idx"], dtype=int)
     n_total = len(adata.uns["juzi_names"])
 
-    max_per_factor = np.zeros(n_total)
-    max_per_factor[sim_idx] = sim.max(axis=1)
+    max_per_factor = np.zeros(n_total, dtype=float)
+    if sim.shape[0] > 0:
+        max_per_factor[sim_idx] = sim.max(axis=1)
 
-    base_mask = adata.uns.get(
+    # Base eligibility mask:
+    # factors that actually entered similarity space
+    in_similarity = np.zeros(n_total, dtype=bool)
+    in_similarity[sim_idx] = True
+
+    # Use current similarity keep mask if present, otherwise all factors
+    # in similarity space are considered eligible
+    keep_similarity = adata.uns.get(
         "juzi_keep_similarity",
-        np.zeros(n_total, dtype=bool),
+        in_similarity.copy(),
     )
 
+    # Retention curve:
+    # preserve any upstream exclusions outside similarity filtering
+    keep_prune = adata.uns.get("juzi_keep_prune", np.ones(n_total, dtype=bool))
+    eligible_mask = in_similarity & keep_prune
+
     n_retained = np.array(
-        [(base_mask & (max_per_factor >= t)).sum() for t in thresholds]
+        [(eligible_mask & (max_per_factor >= t)).sum() for t in thresholds],
+        dtype=int,
     )
 
     max_sim_values = max_per_factor[sim_idx]
@@ -118,6 +131,20 @@ def similarity(
         solid_capstyle="round",
     )
 
+    # Mark currently active filtering threshold if available
+    current_min_similarity = None
+    if "juzi_similarity_meta" in adata.uns:
+        current_min_similarity = adata.uns["juzi_similarity_meta"].get("min_similarity")
+
+    if current_min_similarity is not None:
+        ax_retention.axvline(
+            current_min_similarity,
+            color="black",
+            linewidth=0.8,
+            linestyle=":",
+            alpha=0.7,
+        )
+
     ax_retention.set_xlabel("Min similarity threshold", fontsize=fontsize)
     ax_retention.set_ylabel("Factors retained", fontsize=fontsize)
     ax_retention.tick_params(axis="both", length=2, labelsize=fontsize)
@@ -139,6 +166,7 @@ def similarity(
 
     # GMM overlay
 
+    gmm_threshold = None
     if show_gmm and len(max_sim_values) >= 4:
         gmm_threshold = _fit_gmm(
             values=max_sim_values,
@@ -148,7 +176,6 @@ def similarity(
             fontsize=fontsize,
         )
 
-        # Mark suggested threshold on retention curve too
         if gmm_threshold is not None:
             ax_retention.axvline(
                 gmm_threshold,
@@ -167,8 +194,21 @@ def similarity(
     for spine in ["left", "bottom"]:
         ax_hist.spines[spine].set_linewidth(0.5)
 
-    n_in_sim = len(sim_idx)
-    n_base = int(base_mask.sum())
+    # Small annotation block
+
+    n_in_sim = int(in_similarity.sum())
+    n_kept = int(keep_similarity.sum())
+
+    ax_hist.text(
+        0.98,
+        0.98,
+        f"n in similarity = {n_in_sim}\n" f"n kept = {n_kept}",
+        transform=ax_hist.transAxes,
+        ha="right",
+        va="top",
+        fontsize=fontsize - 1,
+        color="black",
+    )
 
     return ax_retention, ax_hist
 
@@ -180,27 +220,7 @@ def _fit_gmm(
     color: str,
     fontsize: int,
 ) -> float | None:
-    """Fit a two-component GMM to max similarity values, overlay on ax,
-    and return the crossover threshold between noise and signal components.
-
-    Parameters
-    ----------
-    values : np.ndarray
-        Max similarity values per factor.
-    ax : plt.Axes
-        Axes to draw the GMM overlay on.
-    bin_edges : np.ndarray
-        Bin edges from the histogram — used to scale density to counts.
-    color : str
-        Base colour for component curves.
-    fontsize : int
-        Font size for the legend.
-
-    Returns
-    -------
-    float | None
-        The crossover threshold or None if the GMM fit is unreliable.
-    """
+    """Fit a two-component GMM to max similarity values and return the crossover."""
     try:
         from sklearn.mixture import GaussianMixture
         from scipy.stats import norm
@@ -221,28 +241,28 @@ def _fit_gmm(
     noise_c = int(np.argmin(means))
     sig_c = int(np.argmax(means))
 
-    # Warn if components are not well separated
     if np.abs(means[noise_c] - means[sig_c]) < 0.05:
         warnings.warn(
             f"GMM components have similar means ({means[noise_c]:.3f} and "
             f"{means[sig_c]:.3f}) — distribution may not be bimodal. "
-            "The suggested threshold may be unreliable. "
-            "Inspect the histogram before applying.",
+            "The suggested threshold may be unreliable.",
             UserWarning,
             stacklevel=3,
         )
 
-    # Scale density to histogram counts
     bin_width = bin_edges[1] - bin_edges[0]
     n = len(values)
     x_grid = np.linspace(0, 1, 500)
 
-    for c_idx, (linestyle, label) in enumerate(zip(["--", "-"], ["Noise", "Signal"])):
+    for c_idx, (linestyle, label) in enumerate(
+        zip(["--", "-"], ["Lower-similarity", "Higher-similarity"])
+    ):
         c = noise_c if c_idx == 0 else sig_c
         mu = gmm.means_[c, 0]
         sigma = np.sqrt(gmm.covariances_[c, 0, 0])
         w = gmm.weights_[c]
         density_scaled = w * norm.pdf(x_grid, mu, sigma) * n * bin_width
+
         ax.plot(
             x_grid,
             density_scaled,
@@ -253,7 +273,6 @@ def _fit_gmm(
             label=label,
         )
 
-    # Find crossover where P(signal | x) >= P(noise | x)
     grid = x_grid.reshape(-1, 1)
     proba = gmm.predict_proba(grid)
     cross_idx = np.argmax(proba[:, sig_c] >= proba[:, noise_c])

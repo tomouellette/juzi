@@ -6,14 +6,15 @@ import numpy as np
 from anndata import AnnData
 from joblib import Parallel, delayed
 from typing import Callable
+
 from tqdm import tqdm
 
 from ._nmf import _recompute_keep, _combined_score
 
 
-def similarity_compute(
+def similarity(
     adata: AnnData,
-    distance: str | Callable = "jaccard",
+    metric: str | Callable = "jaccard",
     top_k: int | None = 50,
     intra_sample: bool = True,
     drop_zeros: bool = True,
@@ -23,32 +24,33 @@ def similarity_compute(
     silent: bool = False,
     copy: bool = False,
 ) -> AnnData | None:
-    """Compute pairwise similarity between gene program factors across samples.
+    """Compute pairwise similarity between NMF factors across samples.
 
-    Builds a symmetric factor × factor similarity matrix using either Jaccard
-    similarity on top-loaded genes or a user-provided distance function.
-    Only factors retained by juzi_keep enter the computation. The resulting
-    matrix has shape (n_kept × n_kept).
+    Builds a symmetric factor × factor similarity matrix using either
+    Jaccard similarity on top-ranked gene sets or a user-provided metric.
+    Only factors currently retained by juzi_keep enter the computation.
+    The resulting matrix has shape (n_kept × n_kept).
 
     Parameters
     ----------
     adata : AnnData
-        AnnData object fit with juzi.gp.nmf and juzi.gp.prune.
-    distance : str | Callable
+        AnnData object fit with juzi.gp.nmf_fit and optionally juzi.gp.nmf_prune.
+    metric : str | Callable
         Similarity metric. "jaccard" computes overlap of top-k gene sets.
         A callable must accept two 1-d float arrays and return a scalar.
     top_k : int | None
-        Number of top genes used per factor. Required for "jaccard".
+        Number of top genes used per factor. Required for metric="jaccard".
+        When metric is callable and top_k is not None, the callable is applied
+        only to the union of the top-k genes from the two factors.
     intra_sample : bool
-        If True, compute within-donor similarities. If False, only
-        inter-donor similarities are computed.
+        If True, compute within-sample similarities. If False, only
+        inter-sample similarities are computed.
     drop_zeros : bool
-        If True, flag factors whose entire similarity row is zero.
+        If True, factors whose entire similarity row is zero are removed
+        from juzi_keep_similarity.
     use_combined : bool
-        If True, rank genes by combined loading × specificity score
-        (G * G / G.sum(axis=0)) before selecting top_k genes. Downweights
-        genes that load broadly across factors, making similarity more
-        discriminative. If False, rank by raw loading magnitude.
+        If True, rank genes by combined loading × specificity score before
+        selecting top_k genes. If False, rank by raw loading magnitude.
     n_jobs : int
         Number of parallel workers.
     prefer : str | None
@@ -62,10 +64,12 @@ def similarity_compute(
     -------
     AnnData | None
         AnnData with the following fields populated:
-            .uns["juzi_similarity"]      : (n_kept × n_kept) similarity matrix
-            .uns["juzi_similarity_idx"]  : global factor indices
-            .uns["juzi_keep_similarity"] : boolean mask length n_total
-            .uns["juzi_keep"]            : intersection of all three stage masks
+            .uns["juzi_similarity"]       : (n_kept × n_kept) similarity matrix
+            .uns["juzi_similarity_idx"]   : global factor indices
+            .uns["juzi_keep_similarity"]  : boolean mask length n_total
+            .uns["juzi_similarity_meta"]  : similarity parameter metadata
+            .uns["juzi_similarity_scope"] : "all" or "inter"
+            .uns["juzi_keep"]             : intersection of all three stage masks
     """
     adata = adata.copy() if copy else adata
 
@@ -75,40 +79,54 @@ def similarity_compute(
         ("juzi_G", "varm"),
         ("juzi_k", "uns"),
         ("juzi_names", "uns"),
+        ("juzi_G_genes", "uns"),
     ]:
         if field not in getattr(adata, store):
-            raise KeyError(f"'{field}' not found in .{store}. Run juzi.gp.nmf first.")
+            raise KeyError(
+                f"'{field}' not found in .{store}. Run juzi.gp.nmf_fit first."
+            )
 
-    if distance != "jaccard" and not callable(distance):
-        raise ValueError("distance must be 'jaccard' or a callable.")
+    if metric != "jaccard" and not callable(metric):
+        raise ValueError("metric must be 'jaccard' or a callable.")
 
-    if distance == "jaccard" and top_k is None:
-        raise ValueError("top_k must be set when using distance='jaccard'.")
+    if metric == "jaccard" and top_k is None:
+        raise ValueError("top_k must be set when using metric='jaccard'.")
 
     if top_k is not None and top_k < 1:
         raise ValueError("top_k must be a positive integer.")
 
-    if callable(distance):
-        _validate_distance_fn(distance)
+    if top_k is not None and top_k > adata.n_vars:
+        raise ValueError(f"top_k={top_k} exceeds number of genes ({adata.n_vars}).")
 
-    # Subset to kept factors
+    if callable(metric):
+        _validate_metric_fn(metric)
+
+    # Subset to currently kept factors
 
     n_total = adata.varm["juzi_G"].shape[1]
-    keep = (
-        adata.uns["juzi_keep"]
-        if "juzi_keep" in adata.uns
-        else np.ones(n_total, dtype=bool)
-    )
+    keep = adata.uns.get("juzi_keep", np.ones(n_total, dtype=bool))
     sim_idx = np.where(keep)[0]
+
     G_all = adata.varm["juzi_G"].T  # (n_total × n_genes)
     G = G_all[sim_idx]  # (n_kept × n_genes)
-    names_all = np.array(adata.uns["juzi_names"])
+
+    names_all = np.array(adata.uns["juzi_names"], dtype=object)
     names = names_all[sim_idx]
+
+    gene_names = np.array(adata.uns["juzi_G_genes"], dtype=object)
     n = G.shape[0]
 
-    # Compute gene ranking scores
+    # Compute ranking scores for top-gene extraction
 
     G_score = _combined_score(G) if use_combined else G
+
+    # Precompute top gene sets for Jaccard and callable subsetting
+
+    top_gene_sets = None
+    if top_k is not None:
+        top_gene_sets = [
+            set(gene_names[np.argsort(row)[-int(top_k) :]].tolist()) for row in G_score
+        ]
 
     # Build index pairs
 
@@ -127,9 +145,10 @@ def similarity_compute(
             i=i,
             j=j,
             G=G,
-            G_score=G_score,
+            gene_names=gene_names,
+            top_gene_sets=top_gene_sets,
             top_k=top_k,
-            distance=distance,
+            metric=metric,
         )
         for i, j in tqdm(
             indices,
@@ -159,11 +178,57 @@ def similarity_compute(
         keep_sim[sim_idx] = True
 
     adata.uns["juzi_keep_similarity"] = keep_sim
-    adata.uns["juzi_similarity_intra"] = intra_sample
+    adata.uns["juzi_similarity_scope"] = "all" if intra_sample else "inter"
+    adata.uns["juzi_similarity_intra"] = intra_sample  # backwards compatibility
+    adata.uns["juzi_similarity_meta"] = {
+        "metric": metric if isinstance(metric, str) else "callable",
+        "top_k": top_k,
+        "intra_sample": intra_sample,
+        "drop_zeros": drop_zeros,
+        "use_combined": use_combined,
+    }
 
     _recompute_keep(adata)
 
     return adata if copy else None
+
+
+def similarity_compute(
+    adata: AnnData,
+    distance: str | Callable = "jaccard",
+    top_k: int | None = 50,
+    intra_sample: bool = True,
+    drop_zeros: bool = True,
+    use_combined: bool = False,
+    n_jobs: int = 1,
+    prefer: str | None = None,
+    silent: bool = False,
+    copy: bool = False,
+) -> AnnData | None:
+    """Backward-compatible wrapper for similarity().
+
+    Parameters
+    ----------
+    distance : str | Callable
+        Deprecated alias for metric.
+
+    Returns
+    -------
+    AnnData | None
+        Same as similarity().
+    """
+    return similarity(
+        adata=adata,
+        metric=distance,
+        top_k=top_k,
+        intra_sample=intra_sample,
+        drop_zeros=drop_zeros,
+        use_combined=use_combined,
+        n_jobs=n_jobs,
+        prefer=prefer,
+        silent=silent,
+        copy=copy,
+    )
 
 
 def similarity_filter(
@@ -176,7 +241,7 @@ def similarity_filter(
     Updates juzi_keep_similarity to flag factors whose maximum similarity
     to any other factor falls below min_similarity. Can be re-run with
     different thresholds without re-running juzi.gp.similarity. The
-    drop_zeros mask is preserved across re-runs.
+    original drop_zeros behavior is preserved across re-runs.
 
     Parameters
     ----------
@@ -199,7 +264,7 @@ def similarity_filter(
     for field in ["juzi_similarity", "juzi_similarity_idx"]:
         if field not in adata.uns:
             raise KeyError(
-                f"'{field}' not found in .uns. " "Run juzi.gp.similarity_compute first."
+                f"'{field}' not found in .uns. Run juzi.gp.similarity first."
             )
 
     if not 0.0 <= min_similarity <= 1.0:
@@ -220,7 +285,7 @@ def similarity_filter(
     keep_sim[sim_idx] = False
     keep_sim[sim_idx[local_pass]] = True
 
-    # Preserve drop_zeros mask
+    # Preserve original drop_zeros behavior if present
     if "juzi_keep_similarity" in adata.uns:
         local_nonzero = ~np.isclose(sim, 0).all(axis=1)
         original_drop_zeros = np.zeros(n_total, dtype=bool)
@@ -233,46 +298,62 @@ def similarity_filter(
     return adata if copy else None
 
 
-def _validate_distance_fn(distance: Callable) -> None:
-    x, y = np.random.default_rng(0).random(4), np.random.default_rng(1).random(4)
+def _validate_metric_fn(metric: Callable) -> None:
+    """Validate that a callable metric accepts two 1-d arrays and returns a scalar."""
+    x = np.random.default_rng(0).random(4)
+    y = np.random.default_rng(1).random(4)
+
     try:
-        result = distance(x, y)
-    except Exception:
-        raise ValueError("distance callable must accept two 1-d float arrays.")
+        result = metric(x, y)
+    except Exception as exc:
+        raise ValueError("metric callable must accept two 1-d float arrays.") from exc
+
     if not isinstance(result, (int, float, np.floating)):
-        raise ValueError("distance callable must return a scalar value.")
+        raise ValueError("metric callable must return a scalar value.")
 
 
 def _compute_similarity(
     i: int,
     j: int,
     G: np.ndarray,
-    G_score: np.ndarray,
+    gene_names: np.ndarray,
+    top_gene_sets: list[set[str]] | None,
     top_k: int | None,
-    distance: str | Callable,
+    metric: str | Callable,
 ) -> tuple[int, int, float]:
     """Compute similarity between two factor loading vectors."""
-    x, y = G[i], G[j]
-    x_score, y_score = G_score[i], G_score[j]
+    x = G[i]
+    y = G[j]
 
     if np.sum(x) == 0 or np.sum(y) == 0:
         return (i, j, 0.0)
 
-    if distance == "jaccard":
-        top_x = np.argsort(x_score)[-int(top_k) :]
-        top_y = np.argsort(y_score)[-int(top_k) :]
-        union = np.union1d(top_x, top_y)
+    if metric == "jaccard":
+        assert top_gene_sets is not None
+        top_x = top_gene_sets[i]
+        top_y = top_gene_sets[j]
+
+        union = top_x | top_y
         if len(union) == 0:
             return (i, j, 0.0)
-        s_xy = len(np.intersect1d(top_x, top_y)) / len(union)
+
+        s_xy = len(top_x & top_y) / len(union)
+
     else:
         if top_k is not None:
-            union = np.union1d(
-                np.argsort(x_score)[-int(top_k) :],
-                np.argsort(y_score)[-int(top_k) :],
-            )
-            x, y = x[union], y[union]
-        s_xy = float(distance(x, y))
+            assert top_gene_sets is not None
+            union_genes = top_gene_sets[i] | top_gene_sets[j]
+            if len(union_genes) == 0:
+                return (i, j, 0.0)
+
+            union_mask = np.isin(gene_names, list(union_genes))
+            x_use = x[union_mask]
+            y_use = y[union_mask]
+        else:
+            x_use = x
+            y_use = y
+
+        s_xy = float(metric(x_use, y_use))
 
     if np.isnan(s_xy):
         return (i, j, 0.0)

@@ -60,13 +60,13 @@ def score_associate(
     if "juzi_association" not in adata.uns:
         raise KeyError(
             "'juzi_association' not found in .uns. "
-            "Run juzi.gp.associate before plotting."
+            "Run juzi.gp.score_associate before plotting."
         )
 
     if "juzi_cluster_labels" not in adata.uns:
         raise KeyError(
             "'juzi_cluster_labels' not found in .uns. "
-            "Run juzi.gp.cluster before plotting."
+            "Run juzi.gp.programs_cluster before plotting."
         )
 
     if not 0.0 <= padj_thresh <= 1.0:

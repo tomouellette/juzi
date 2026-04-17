@@ -1,6 +1,7 @@
 # Copyright (c) 2025, Tom Ouellette
 # Licensed under the BSD 3-Clause License
 
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -21,16 +22,16 @@ def score_aggregate(
     Takes per-cell program scores from obsm["juzi_program_scores"] and
     aggregates within each donor to produce a per-donor score matrix.
     Donor-level covariates from adata.obs can be propagated alongside
-    scores for direct use in juzi.gp.associate.
+    scores for direct use in juzi.gp.score_associate.
 
     Parameters
     ----------
     adata : AnnData
         AnnData object with juzi_program_scores in .obsm, produced by
-        juzi.gp.score.
+        juzi.gp.score_cells.
     key : str
         Column in adata.obs denoting donor identity. Must match the key
-        used in juzi.gp.nmf.
+        used upstream for donor/sample grouping.
     obs_cols : List[str] | None
         Columns in adata.obs to propagate as donor-level covariates.
         For each column, the first observed value per donor is taken —
@@ -49,10 +50,11 @@ def score_aggregate(
     Returns
     -------
     AnnData | None
-        AnnData with the following field populated:
+        AnnData with the following fields populated:
             .uns["juzi_aggregate_scores"] : DataFrame (n_donors × n_programs)
                 with optional covariate columns appended. Donors with fewer
                 than min_cells cells are excluded.
+            .uns["juzi_aggregate_meta"]   : aggregation parameter metadata
     """
     adata = adata.copy() if copy else adata
 
@@ -60,11 +62,12 @@ def score_aggregate(
 
     if "juzi_program_scores" not in adata.obsm:
         raise KeyError(
-            "'juzi_program_scores' not found in .obsm. " "Run juzi.gp.score first."
+            "'juzi_program_scores' not found in .obsm. "
+            "Run juzi.gp.score_cells first."
         )
 
     if key not in adata.obs:
-        raise KeyError(f"'{key}' not found in adata.obs. " "Check your key argument.")
+        raise KeyError(f"'{key}' not found in adata.obs. Check your key argument.")
 
     if agg not in ("mean", "median"):
         raise ValueError("agg must be 'mean' or 'median'.")
@@ -76,7 +79,7 @@ def score_aggregate(
         missing = [c for c in obs_cols if c not in adata.obs]
         if missing:
             raise KeyError(
-                f"The following obs_cols were not found in adata.obs: " f"{missing}."
+                f"The following obs_cols were not found in adata.obs: {missing}."
             )
 
     # Setup
@@ -85,7 +88,7 @@ def score_aggregate(
     n_programs = scores.shape[1]
     program_cols = [f"P{p}" for p in range(n_programs)]
 
-    donors = adata.obs[key].values
+    donors = adata.obs[key].to_numpy()
     unique_donors = np.unique(donors)
 
     # Filter by min_cells
@@ -101,8 +104,6 @@ def score_aggregate(
 
     n_excluded = len(unique_donors) - len(valid_donors)
     if n_excluded > 0:
-        import warnings
-
         warnings.warn(
             f"{n_excluded} donor(s) excluded for having fewer than "
             f"min_cells={min_cells} cells.",
@@ -145,5 +146,14 @@ def score_aggregate(
         agg_df = pd.concat([agg_df, covariate_df], axis=1)
 
     adata.uns["juzi_aggregate_scores"] = agg_df
+    adata.uns["juzi_aggregate_meta"] = {
+        "key": key,
+        "obs_cols": obs_cols if obs_cols is not None else [],
+        "agg": agg,
+        "min_cells": min_cells,
+        "n_programs": n_programs,
+        "n_donors_total": int(len(unique_donors)),
+        "n_donors_kept": int(len(valid_donors)),
+    }
 
     return adata if copy else None
