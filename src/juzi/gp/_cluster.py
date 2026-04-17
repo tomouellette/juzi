@@ -33,12 +33,10 @@ def programs_cluster(
     - strategy="centroid":
         Iterative hierarchical clustering on the similarity matrix with
         cluster merging controlled by `threshold`.
-
     - strategy="progressive":
         Progressive meta-program (MP) construction where programs are
-        grown from a founder factor by iteratively adding the best
-        overlapping factor and updating the MP gene set via frequency +
-        NMF-score ranking.
+        grown from a founder factor by iteratively adding the best overlapping
+        factor and updating the MP gene set via frequency + NMF-score ranking.
 
     Both strategies populate a common set of cluster fields so downstream
     steps can treat the result uniformly.
@@ -73,8 +71,7 @@ def programs_cluster(
     min_founder_overlaps : int
         Progressive mode only. Minimum number of other unassigned factors
         with pairwise overlap >= min_overlap required for a factor to be
-        chosen as a founder. A founder must have strictly more than this
-        value qualifying partners, so this parameter sets the lower bound.
+        chosen as a founder.
     copy : bool
         If True, return a modified copy. If False, modify in place.
 
@@ -220,7 +217,8 @@ def programs_progressive(
         For each iteration, count how many unassigned factors have pairwise
         gene overlap >= min_overlap with each candidate. Pick the candidate
         with the highest count (the "founder"). Stop when that count is
-        not strictly greater than min_founder_overlaps
+        not strictly greater than min_founder_overlaps (default 6, reproducing
+        the paper's "exceeded 5 cases" stopping rule).
 
     Seed initialisation:
         The founder's own top-k gene set becomes the initial Genes_MP.
@@ -1015,7 +1013,7 @@ def _recompute_genes_mp(
     """Recompute Genes_MP from the full running member gene history.
 
     Ties at position top_k are broken by the maximum NMF loading score
-    for that gene across all current cluster members.
+    for that gene across all current cluster members:
 
     Parameters
     ----------
@@ -1254,9 +1252,11 @@ def _reorder_clusters(
     """Return a permutation index that places factors in heatmap-ready order.
 
     Clusters are sorted by descending size (largest program first). Within
-    each cluster, factors are sorted by internal similarity via hierarchical
-    clustering so the most similar factors are adjacent — the natural display
-    order for a block-diagonal heatmap.
+    each cluster, factors are ordered using optimal leaf ordering (OLO) so
+    that the most mutually similar factors are adjacent. The block is then
+    reversed so the highest-similarity dense core sits at the bottom-right
+    corner of each diagonal sub-block — the conventional visual placement
+    for block-diagonal heatmaps.
 
     Returns
     -------
@@ -1271,12 +1271,25 @@ def _reorder_clusters(
     reorder_idx: List[int] = []
     for c in c_sorted:
         idx = np.where(clusters == c)[0]
-        if len(idx) > 1:
+        if len(idx) > 2:
             Si = S[np.ix_(idx, idx)]
             D = sp.spatial.distance.squareform(1.0 - Si, checks=False)
             Z = sp.cluster.hierarchy.linkage(D, method=method)
-            sub_order = sp.cluster.hierarchy.leaves_list(Z)
+            Z_olo = sp.cluster.hierarchy.optimal_leaf_ordering(Z, D)
+            sub_order = sp.cluster.hierarchy.leaves_list(Z_olo)
+            # Reverse so the dense high-similarity core is at bottom-right
+            # of each diagonal block rather than top-left.
+            sub_order = sub_order[::-1]
             reorder_idx.extend(idx[sub_order].tolist())
+        elif len(idx) == 2:
+            # For a pair, place the factor with the higher mean similarity
+            # to the rest of the cluster second (bottom-right position).
+            Si = S[np.ix_(idx, idx)]
+            row_means = Si.mean(axis=1)
+            if row_means[0] >= row_means[1]:
+                reorder_idx.extend([idx[1], idx[0]])
+            else:
+                reorder_idx.extend(idx.tolist())
         else:
             reorder_idx.extend(idx.tolist())
 
