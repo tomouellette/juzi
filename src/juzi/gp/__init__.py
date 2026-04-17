@@ -45,4 +45,5 @@ __all__ = [
     "score_aggregate",
     "score_associate",
     "programs_annotate",
+    "programs_threshold",
 ]

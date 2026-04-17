@@ -21,19 +21,22 @@ def programs_loadings(
     """Plot canonical program genes with centroid-based loading magnitudes.
 
     Genes displayed are the canonical gene sets from juzi_cluster_genes,
-    computed at cluster time by juzi.gp.programs_cluster. For centroid mode
-    these are typically top genes by combined score; for progressive mode
-    these are the MP genes.
+    computed at cluster time by juzi.gp.programs_cluster.
 
-    Bar lengths reflect the corresponding values in juzi_cluster_G,
-    normalised to [0, 1] within each program for display.
+    For centroid mode, genes are ordered by descending centroid loading
+    within each program (highest-loaded gene at the top).
+
+    For progressive mode, genes are ordered by descending MP frequency
+    (most-recurrent gene at the top), matching the canonical list order
+    stored in juzi_cluster_genes. Bar lengths still reflect centroid
+    loading magnitude, normalised to [0, 1] within each program.
 
     Parameters
     ----------
     adata : AnnData
         AnnData object with juzi_cluster_genes, juzi_cluster_G,
-        juzi_cluster_labels, and juzi_G_genes in .uns, produced by
-        juzi.gp.programs_cluster.
+        juzi_cluster_labels, and juzi_G_genes in .uns, produced
+        by juzi.gp.programs_cluster.
     figsize : Tuple[float, float] | None
         Figure size in inches. If None, inferred automatically.
     palette : Dict[int, str] | None
@@ -69,11 +72,14 @@ def programs_loadings(
     # Setup
 
     cluster_genes = adata.uns["juzi_cluster_genes"]
-    G = np.asarray(adata.uns["juzi_cluster_G"])  # (n_programs x n_genes)
+    # juzi_cluster_G shape: (n_programs, n_genes)
+    # Columns align to juzi_G_genes order — same as gene_to_idx below.
+    G = np.asarray(adata.uns["juzi_cluster_G"])
     gene_names = np.array(adata.uns["juzi_G_genes"], dtype=object)
     labels = np.array(adata.uns["juzi_cluster_labels"])
     unique_C = np.unique(labels)
     n_programs = len(unique_C)
+    strategy = adata.uns.get("juzi_cluster_meta", {}).get("strategy", "centroid")
 
     if G.shape[0] != n_programs:
         raise ValueError(
@@ -81,9 +87,10 @@ def programs_loadings(
             "cluster labels."
         )
 
+    # gene_to_idx maps gene name -> column index in G (via juzi_G_genes)
     gene_to_idx = {g: i for i, g in enumerate(gene_names)}
 
-    # Infer max genes to display from canonical program gene sets
+    # Infer panel height from the largest canonical gene set
     n_top_genes = max(len(cluster_genes.get(int(c), [])) for c in unique_C)
 
     if n_top_genes == 0:
@@ -116,8 +123,11 @@ def programs_loadings(
 
     # Plot each program
 
-    for i, (c, ax) in enumerate(zip(unique_C, axes_flat)):
+    for prog_pos, (c, ax) in enumerate(zip(unique_C, axes_flat)):
         color = palette[int(c)]
+        # Canonical gene list — order reflects clustering strategy:
+        #   centroid:    descending combined score
+        #   progressive: descending MP frequency (most-recurrent first)
         genes = list(cluster_genes.get(int(c), []))
 
         if len(genes) == 0:
@@ -152,8 +162,11 @@ def programs_loadings(
 
         gene_idx = np.array([gene_to_idx[g] for g in present_genes], dtype=int)
 
-        # Use canonical gene order from cluster time
-        raw_vals = G[i, gene_idx]
+        # Centroid loading for each canonical gene.
+        # prog_pos is the row index into G, which aligns with unique_C order
+        # because both juzi_cluster_G and juzi_cluster_labels use the same
+        # contiguous 0-based labelling after _finalise_clusters.
+        raw_vals = G[prog_pos, gene_idx]
 
         # Normalise to [0, 1] within program for display
         max_val = raw_vals.max()
@@ -161,20 +174,36 @@ def programs_loadings(
             max_val = 1.0
         disp_vals = raw_vals / max_val
 
-        n_genes = len(present_genes)
+        # Determine display order
+        # Centroid mode: sort by centroid loading descending so the
+        #   highest-loaded gene is at the top.
+        # Progressive mode: preserve canonical list order (frequency
+        #   descending) — the list is already stored highest-frequency-first
+        #   after the _cluster.py refactor, so no sort is needed.
+        if strategy == "centroid":
+            sort_order = np.argsort(disp_vals)  # ascending; we plot bottom-up
+        else:
+            # progressive: canonical order is already frequency-descending.
+            # Reverse to ascending so barh with increasing y puts the
+            # top-ranked gene at the highest y position (visually at top).
+            sort_order = np.arange(len(present_genes) - 1, -1, -1)
+
+        ordered_genes = [present_genes[j] for j in sort_order]
+        ordered_vals = disp_vals[sort_order]
+
+        n_genes = len(ordered_genes)
         y_pos = np.arange(n_genes)
 
-        # Reverse so top-ranked gene appears at top
         ax.barh(
             y_pos,
-            disp_vals[::-1],
+            ordered_vals,
             height=bar_height,
             color=color,
             edgecolor="none",
         )
 
         if show_values:
-            for y, v in zip(y_pos, disp_vals[::-1]):
+            for y, v in zip(y_pos, ordered_vals):
                 ax.text(
                     v + 0.01,
                     y,
@@ -186,11 +215,7 @@ def programs_loadings(
                 )
 
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(
-            present_genes[::-1],
-            fontsize=fontsize,
-            style="italic",
-        )
+        ax.set_yticklabels(ordered_genes, fontsize=fontsize, style="italic")
         ax.set_xlim(0, 1.05)
         ax.set_xlabel("Normalised loading", fontsize=fontsize)
         ax.tick_params(axis="x", length=2, labelsize=fontsize)

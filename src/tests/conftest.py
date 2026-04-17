@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pytest
 from anndata import AnnData
@@ -194,5 +195,7 @@ def adata_annotated(adata_cluster_centroid, gene_sets):
 @pytest.fixture
 def adata_stable(adata_cluster_progressive):
     adata = adata_cluster_progressive.copy()
-    jz.gp.programs_stability(adata, top_k=10, min_program_genes=3)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        jz.gp.programs_stability(adata, top_k=10, min_program_genes=3)
     return adata

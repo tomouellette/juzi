@@ -22,52 +22,48 @@ def programs_stability(
     remains when each contributing donor is removed in turn.
 
     For a given program and held-out donor:
+
     1. Collect all retained cluster-member factors for that program that do
        not come from the held-out donor.
     2. Recompute a leave-one-donor-out program gene set from those remaining
-       member factors using the same general program definition style:
-         - centroid programs: top genes by mean factor loading
-         - progressive programs: top genes by frequency across members,
-           tie-broken by aggregated loading
-    3. Compare the recomputed gene set to the original canonical program gene
-       set using Jaccard similarity.
+       member factors using the same rule used during clustering:
+
+       - Centroid mode: top genes by combined score of the mean factor
+         loading across remaining members.
+       - Progressive mode: top genes by frequency across member top-top_k
+         sets, with ties at the boundary broken by the maximum NMF loading
+         score of the tied gene across remaining members.
+
+    3. Compute Jaccard similarity between the recomputed gene set and the
+       original canonical program gene set.
 
     The final stability score for each program is the mean Jaccard similarity
-    across all valid donor holdouts.
+    across all valid donor holdouts (donors that contribute at least one
+    factor to the program).
 
     Parameters
     ----------
     adata : AnnData
         AnnData object produced by juzi.gp.programs_cluster.
-        Requires:
-            - .uns["juzi_cluster_genes"]
-            - .uns["juzi_cluster_labels"]
-            - .uns["juzi_cluster_names"]
-            - .uns["juzi_keep_cluster"]
-            - .varm["juzi_G"]
-            - .uns["juzi_G_genes"]
+        Requires juzi_cluster_genes, juzi_cluster_labels,
+        juzi_cluster_names, juzi_cluster_order, juzi_G_genes in .uns
+        and juzi_G in .varm.
     top_k : int
         Maximum number of genes in each recomputed leave-one-donor-out
-        program gene set.
+        program gene set. Should match the top_k / n_top_genes used during
+        clustering. If smaller than the stored canonical gene list, the
+        canonical set is truncated and a warning is emitted.
     min_program_genes : int
         Minimum number of genes required in the original canonical program
-        gene set to evaluate stability.
+        gene set to evaluate stability. Programs with fewer genes will still
+        be scored but a warning is emitted.
     copy : bool
         If True, return a modified copy. If False, modify in place.
 
     Returns
     -------
     AnnData | None
-        AnnData with:
-            .uns["juzi_stability"] : dict with keys:
-                "score"         : (K,) mean stability per program
-                "matrix"        : (K × N) per-program per-donor Jaccard
-                "programs"      : list of program labels (e.g. ["C0", "C1"])
-                "donors"        : list of donor names aligned to matrix columns
-                "top_k"         : top_k used
-                "strategy"      : cluster strategy
-                "n_valid_donors": (K,) number of valid donor holdouts per program
-            .uns["juzi_stability_meta"] : dict with metadata
+        AnnData with juzi_stability and juzi_stability_meta in .uns.
     """
     adata = adata.copy() if copy else adata
 
@@ -77,7 +73,7 @@ def programs_stability(
         ("juzi_cluster_genes", "uns"),
         ("juzi_cluster_labels", "uns"),
         ("juzi_cluster_names", "uns"),
-        ("juzi_keep_cluster", "uns"),
+        ("juzi_cluster_order", "uns"),
         ("juzi_G_genes", "uns"),
         ("juzi_G", "varm"),
     ]:
@@ -93,12 +89,20 @@ def programs_stability(
     if min_program_genes < 1:
         raise ValueError("min_program_genes must be >= 1.")
 
+    # Setup
+
     cluster_genes = adata.uns["juzi_cluster_genes"]
     cluster_labels = np.array(adata.uns["juzi_cluster_labels"])
     cluster_names = np.array(adata.uns["juzi_cluster_names"], dtype=object)
     gene_names = np.array(adata.uns["juzi_G_genes"], dtype=object)
-    full_G = adata.varm["juzi_G"].T
-    keep_cluster = np.array(adata.uns["juzi_keep_cluster"], dtype=bool)
+    full_G = adata.varm["juzi_G"].T  # (n_total_factors, n_genes)
+
+    # juzi_cluster_order records the global factor index at each cluster-space
+    # position, in the same display order as juzi_cluster_labels / names.
+    # Indexing full_G with it gives G_cluster rows that are 1-to-1 aligned
+    # with cluster_labels and cluster_names — no ordering mismatch.
+    cluster_order = np.array(adata.uns["juzi_cluster_order"], dtype=int)
+    G_cluster = full_G[cluster_order]  # (n_cluster_factors, n_genes)
 
     strategy = adata.uns.get("juzi_cluster_meta", {}).get("strategy", "centroid")
     if strategy not in ("centroid", "progressive"):
@@ -109,9 +113,6 @@ def programs_stability(
             stacklevel=2,
         )
         strategy = "centroid"
-
-    # Factors that survived clustering, in cluster-space order
-    G_cluster = full_G[keep_cluster]
 
     unique_clusters = np.unique(cluster_labels)
     program_labels = [f"C{int(c)}" for c in unique_clusters]
@@ -147,8 +148,20 @@ def programs_stability(
                 stacklevel=2,
             )
 
+        if len(canonical_genes) > top_k:
+            warnings.warn(
+                f"Program C{prog_key} has {len(canonical_genes)} canonical genes "
+                f"but top_k={top_k}; canonical set truncated to {top_k} genes "
+                "for stability computation.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         canonical_set = set(canonical_genes[:top_k])
 
+        # member_mask selects cluster-space rows for this program.
+        # G_cluster is indexed via cluster_order so rows align exactly with
+        # cluster_labels and cluster_names.
         member_mask = cluster_labels == c
         member_names = cluster_names[member_mask]
         member_G = G_cluster[member_mask]
@@ -156,7 +169,6 @@ def programs_stability(
         for d_idx, donor in enumerate(donors):
             loo_mask = member_names != donor
 
-            # Need at least one remaining factor to define a leave-one-out program
             if loo_mask.sum() == 0:
                 continue
 
@@ -171,13 +183,8 @@ def programs_stability(
             )
 
             loo_set = set(loo_genes)
-
             union = canonical_set | loo_set
-            if len(union) == 0:
-                jacc = 0.0
-            else:
-                jacc = len(canonical_set & loo_set) / len(union)
-
+            jacc = len(canonical_set & loo_set) / len(union) if union else 0.0
             stability_matrix[p_idx, d_idx] = float(jacc)
 
         valid = ~np.isnan(stability_matrix[p_idx])
@@ -215,27 +222,7 @@ def _recompute_program_genes(
     top_k: int,
     strategy: str,
 ) -> List[str]:
-    """Recompute a leave-one-donor-out program gene set from factor loadings.
-
-    Parameters
-    ----------
-    G : np.ndarray
-        Factor loading matrix for one program after leave-one-donor-out,
-        shape (n_members, n_genes).
-    gene_names : np.ndarray
-        Gene names aligned to columns of G.
-    gene_to_idx : Dict[str, int]
-        Mapping from gene name to column index in G.
-    top_k : int
-        Number of genes to return.
-    strategy : str
-        "centroid" or "progressive".
-
-    Returns
-    -------
-    List[str]
-        Recomputed program gene set.
-    """
+    """Recompute a leave-one-donor-out program gene set from factor loadings."""
     if G.shape[0] == 0:
         return []
 
@@ -248,28 +235,69 @@ def _recompute_program_genes(
         return gene_names[top_idx].tolist()
 
     if strategy == "progressive":
-        # Approximate MP reconstruction from remaining member factors:
-        # rank genes by frequency across member top-k sets, then by total loading
-        gene_freq: Dict[str, int] = {}
-        gene_score: Dict[str, float] = {}
-
-        for i in range(G.shape[0]):
-            idx = np.argsort(G[i])[-top_k:]
-            genes_i = gene_names[idx].tolist()
-
-            for g in genes_i:
-                gene_freq[g] = gene_freq.get(g, 0) + 1
-                gene_score[g] = gene_score.get(g, 0.0) + float(G[i, gene_to_idx[g]])
-
-        ordered = sorted(
-            gene_freq.keys(),
-            key=lambda g: (gene_freq[g], gene_score[g], g),
-            reverse=True,
+        return _recompute_progressive(
+            G=G,
+            gene_names=gene_names,
+            gene_to_idx=gene_to_idx,
+            top_k=top_k,
         )
-        return ordered[:top_k]
 
-    # Fallback: centroid-style
+    # Fallback
     centroid = G.mean(axis=0, keepdims=True)
     rank = _combined_score(centroid)[0]
     top_idx = np.argsort(rank)[-top_k:][::-1]
     return gene_names[top_idx].tolist()
+
+
+def _recompute_progressive(
+    G: np.ndarray,
+    gene_names: np.ndarray,
+    gene_to_idx: Dict[str, int],
+    top_k: int,
+) -> List[str]:
+    """Reconstruct a progressive-mode MP gene set from a subset of member factors.
+
+    Mirrors _mp_from_history in _cluster.py exactly: frequency table over
+    all member top-k gene sets, with ties at the top_k boundary broken by
+    maximum NMF loading score across remaining members.
+    """
+    gene_freq: Dict[str, int] = {}
+    gene_max_score: Dict[str, float] = {}
+
+    for i in range(G.shape[0]):
+        top_idx = np.argsort(G[i])[-top_k:]
+        genes_i = gene_names[top_idx].tolist()
+
+        for g in genes_i:
+            gene_freq[g] = gene_freq.get(g, 0) + 1
+            s = float(G[i, gene_to_idx[g]])
+            if s > gene_max_score.get(g, 0.0):
+                gene_max_score[g] = s
+
+    if not gene_freq:
+        return []
+
+    sorted_genes = sorted(gene_freq.keys(), key=lambda g: gene_freq[g], reverse=True)
+
+    if len(sorted_genes) <= top_k:
+        return sorted(
+            sorted_genes,
+            key=lambda g: (gene_freq[g], gene_max_score.get(g, 0.0)),
+            reverse=True,
+        )
+
+    boundary_freq = gene_freq[sorted_genes[top_k - 1]]
+    above = [g for g in sorted_genes if gene_freq[g] > boundary_freq]
+    at_border = [g for g in sorted_genes if gene_freq[g] == boundary_freq]
+    n_needed = top_k - len(above)
+
+    if len(at_border) <= n_needed:
+        return above + at_border
+
+    at_border_sorted = sorted(
+        at_border,
+        key=lambda g: gene_max_score.get(g, 0.0),
+        reverse=True,
+    )
+
+    return above + at_border_sorted[:n_needed]
