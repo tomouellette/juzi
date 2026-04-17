@@ -24,7 +24,7 @@ def programs_heatmap(
     cbar_shrink: float = 0.2,
     cbar_ticks: List[float] | None = None,
     cbar_tick_length: float = 0.0,
-    cbar_label: str = "Similarity (Jaccard)",
+    cbar_label: str = "Similarity",
     cbar_legend_pos: str = "top",
     cbar_labelpad: float = 10.0,
     box_color: str = "red",
@@ -34,30 +34,30 @@ def programs_heatmap(
     add_cluster_colors: bool = True,
     add_cluster_labels: bool = True,
     fontsize: int = 10,
-    vmin: float = 2.0,
-    vmax: float = 25.0,
-    transform_jaccard: bool = True,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    transform_jaccard: bool = False,
 ) -> plt.Axes:
     """Plot the factor similarity matrix with consensus program annotations.
 
-    Displays the reordered factor × factor similarity matrix produced by
+    Displays the reordered factor x factor similarity matrix produced by
     juzi.gp.programs_cluster, with cluster boundaries, a colour bar, and
     optional program labels. Works identically for centroid and progressive
-    clustering — both strategies write juzi_cluster_similarity and
-    juzi_cluster_labels in the same display-ready format.
+    clustering.
 
-    By default the raw Jaccard values are transformed to
-    100 * J / (100 - J) before plotting, matching the Gavish et al.
-    R implementation. This amplifies mid-range similarities and makes
-    cluster structure visually clearer. The default vmin / vmax
-    of [2, 25] are calibrated for this transformed space. Set
-    transform_jaccard=False and vmin=0, vmax=1 to plot raw values.
+    The diagonal of juzi_cluster_similarity is zero (self-similarity pairs
+    are never computed during the similarity step) and is set to 1.0 before
+    plotting so the block-diagonal structure is visually correct.
+
+    vmin and vmax default to None, which triggers automatic scaling from
+    the 1st and 99th percentiles of the off-diagonal positive values,
+    ensuring the colormap always spans the actual data range.
 
     Parameters
     ----------
     adata : AnnData
-        AnnData object with juzi_cluster_similarity and
-        juzi_cluster_labels in .uns.
+        AnnData object with juzi_cluster_similarity and juzi_cluster_labels
+        in .uns.
     figsize : Tuple[float, float]
         Figure size in inches as (width, height).
     ax : plt.Axes | None
@@ -78,8 +78,8 @@ def programs_heatmap(
     cbar_shrink : float
         Fraction by which to shrink the colorbar.
     cbar_ticks : List[float] | None
-        Tick positions on the colorbar. Defaults to [2, 13, 25] when
-        transform_jaccard=True and [0, 0.5, 1] otherwise.
+        Tick positions on the colorbar. If None, three evenly spaced ticks
+        between vmin and vmax are used.
     cbar_tick_length : float
         Length of colorbar ticks.
     cbar_label : str
@@ -97,21 +97,21 @@ def programs_heatmap(
     rasterized : bool
         If True, rasterize the heatmap for performance with large matrices.
     add_cluster_colors : bool
-        If True, add a coloured strip below the x-axis for each cluster.
+        If True, add a coloured strip above the top of the matrix for each cluster.
     add_cluster_labels : bool
         If True, annotate cluster labels beside the heatmap.
     fontsize : int
         Font size for all text elements.
-    vmin : float
-        Minimum value for colormap scaling. Default 2.0 matches the
-        Gavish et al. paper's transformed-space lower bound.
-    vmax : float
-        Maximum value for colormap scaling. Default 25.0 matches the
-        Gavish et al. paper's transformed-space upper bound.
+    vmin : float | None
+        Minimum value for colormap scaling. If None, set to the 1st
+        percentile of positive off-diagonal values.
+    vmax : float | None
+        Maximum value for colormap scaling. If None, set to the 99th
+        percentile of positive off-diagonal values.
     transform_jaccard : bool
-        If True (default), apply 100 * J / (100 - J) to the similarity
-        matrix before plotting, matching the R paper exactly. If False,
-        plot raw Jaccard values (set vmin=0, vmax=1 accordingly).
+        If True, apply J / (1 - J) to raw Jaccard values before plotting
+        (the raw-Jaccard equivalent of the Gavish et al. R transform).
+        Default False — raw Jaccard is plotted directly.
 
     Returns
     -------
@@ -129,18 +129,41 @@ def programs_heatmap(
     C = np.array(adata.uns["juzi_cluster_labels"])
     unique_C = np.unique(C)
 
-    # Apply Gavish et al. Jaccard transform: 100*J / (100 - J)
-    # This is equivalent to the intersection size divided by the non-
-    # overlapping portion, amplifying mid-range similarities.
-    if transform_jaccard:
-        # Clip to [0, 1) to avoid division by zero at J=1
-        S_plot = 100.0 * S / np.where(S < 1.0, 100.0 - 100.0 * S, 1.0)
-    else:
-        S_plot = S
+    # The diagonal is 0 in juzi_cluster_similarity because self-pairs are
+    # never computed during similarity(). Set to 1.0 so the block-diagonal
+    # structure is visually correct — each factor is maximally similar to itself.
+    np.fill_diagonal(S, 1.0)
 
-    # Default colorbar ticks depend on whether transform is applied
+    # Optionally apply J / (1 - J) transform.
+    if transform_jaccard:
+        S_plot = np.where(S < 1.0, S / (1.0 - S), 1.0)
+    else:
+        S_plot = S.copy()
+
+    # Auto-scale vmin/vmax from the off-diagonal positive values.
+    # Exclude the diagonal (now 1.0) to avoid skewing vmax upward.
+    # Exclude exact zeros — most off-diagonal entries are zero for unrelated
+    # factor pairs and including them would collapse vmin to 0.
+    if vmin is None or vmax is None:
+        diag_mask = ~np.eye(S_plot.shape[0], dtype=bool)
+        off_diag = S_plot[diag_mask]
+        positive = off_diag[off_diag > 0]
+
+        if len(positive) == 0:
+            _vmin, _vmax = 0.0, 1.0
+        else:
+            _vmin = float(np.percentile(positive, 1))
+            _vmax = float(np.percentile(positive, 99))
+            if _vmax - _vmin < 1e-6:
+                _vmin = 0.0
+                _vmax = float(positive.max())
+
+        vmin = vmin if vmin is not None else _vmin
+        vmax = vmax if vmax is not None else _vmax
+
     if cbar_ticks is None:
-        cbar_ticks = [2, 13, 25] if transform_jaccard else [0, 0.5, 1]
+        mid = (vmin + vmax) / 2.0
+        cbar_ticks = [round(vmin, 3), round(mid, 3), round(vmax, 3)]
 
     # Figure setup
     created_fig = ax is None
@@ -168,7 +191,7 @@ def programs_heatmap(
         palette = {int(c): colors[i] for i, c in enumerate(unique_C)}
 
     # Main heatmap
-    im = ax.imshow(S_plot, cmap=cmap, vmin=vmin, vmax=vmax, rasterized=rasterized)
+    ax.imshow(S_plot, cmap=cmap, vmin=vmin, vmax=vmax, rasterized=rasterized)
 
     # Colorbar
     cbar = plt.colorbar(
@@ -188,7 +211,6 @@ def programs_heatmap(
     cbar.ax.xaxis.set_label_position(cbar_legend_pos)
 
     # Cluster boundaries and annotations
-    # C is already in contiguous-block display order after juzi.gp.programs_cluster
     edges = np.where(np.diff(C) != 0)[0] + 1
     bounds = np.concatenate([edges, [len(C)]]).tolist()
     buffer = edges[0] * label_buffer if len(edges) > 0 else len(C) * label_buffer
@@ -199,7 +221,6 @@ def programs_heatmap(
         cluster_id = int(C[start])
         color = palette[cluster_id]
 
-        # Cluster boundary rectangle — matches R's geom_rect with dashed red borders
         ax.add_patch(
             mpatches.Rectangle(
                 (start - 0.5, start - 0.5),
@@ -212,17 +233,15 @@ def programs_heatmap(
             )
         )
 
-        # Cluster colour strip below the x-axis.
-        # Use a blended transform: x in data coordinates, y in axes fraction.
-        # This avoids the fragile negative-data-coordinate trick and survives
-        # any axis limits set after the patches are added.
         if add_cluster_colors:
+            # Blended transform: x in data coords, y in axes fraction.
+            # y=1.01 places the strip just above the top spine.
             trans = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
             ax.add_patch(
                 mpatches.Rectangle(
-                    (start - 0.5, -0.04),  # x in data coords, y in axes fraction
-                    size,  # width in data coords
-                    0.02,  # height in axes fraction
+                    (start - 0.5, 1.01),
+                    size,
+                    0.02,
                     facecolor=color,
                     edgecolor="none",
                     linewidth=0.0,
@@ -231,8 +250,6 @@ def programs_heatmap(
                 )
             )
 
-        # Cluster label — left side for clusters in the left half,
-        # right side for clusters in the right half, matching visual convention
         if add_cluster_labels:
             mid = (start + end) / 2
             if end <= len(C) / 2:
@@ -254,7 +271,6 @@ def programs_heatmap(
 
         start = end
 
-    # Axes styling
     n_factors = S.shape[0]
     n_programs = len(unique_C)
 
